@@ -1,12 +1,13 @@
 module AntParser exposing
-    ( CleanExpr(..)
+    ( Accessor(..)
+    , CleanExpr(..)
     , CleanStmt(..)
     , Context(..)
     , Decl(..)
     , Expr(..)
     , Literal(..)
+    , ArithmeticOp(..)
     , Pattern(..)
-    , Accessor(..)
     , Problem(..)
     , Stmt(..)
     , Type(..)
@@ -23,6 +24,7 @@ import Dict exposing (Dict)
 import List.Extra
 import Location exposing (Located, showProblemLocation)
 import Parser.Advanced exposing (..)
+import Pratt.Advanced as Pratt
 import Set exposing (Set)
 
 
@@ -224,20 +226,69 @@ parseExpr : String -> Result (List (DeadEnd Context Problem)) Expr
 parseExpr src =
     run
         (succeed identity
-            |= expr
+            |= map .value expr
             |. end ExpectingEOF
         )
         src
 
 
-expr : AntParser Expr
+expr : AntParser (Located Expr)
 expr =
-    oneOf
-        [ ifExpr
-        , whileExpr
-        , literalExpr
-        , placeOrCallExpr
-        ]
+    let
+        subexpr =
+            Pratt.literal << located
+    in
+    Pratt.expression
+        { oneOf =
+            List.map subexpr
+                [ ifExpr
+                , whileExpr
+                , literalExpr
+                , placeOrCallExpr
+                ]
+        , andThenOneOf =
+            [ Pratt.infixLeft 12
+                (symbol <| Token "+" <| ExpectingSymbol "+")
+              <|
+                formArithmeticExpr AddOp
+            , Pratt.infixLeft 12
+                (symbol <| Token "-" <| ExpectingSymbol "-")
+              <|
+                formArithmeticExpr SubtractOp
+            , Pratt.infixLeft 13
+                (symbol <| Token "*" <| ExpectingSymbol "*")
+              <|
+                formArithmeticExpr MultiplyOp
+            , Pratt.infixLeft 13
+                (symbol <| Token "/" <| ExpectingSymbol "/")
+              <|
+                formArithmeticExpr DivideOp
+            , Pratt.infixLeft 10
+                (symbol <| Token "&" <| ExpectingSymbol "&")
+              <|
+                formArithmeticExpr BitwiseAndOp
+            , Pratt.infixLeft 8
+                (symbol <| Token "|" <| ExpectingSymbol "|")
+              <|
+                formArithmeticExpr BitwiseOrOp
+            ]
+        , spaces = sps
+        }
+
+
+formArithmeticExpr : ArithmeticOp -> Located Expr -> Located Expr -> Located Expr
+formArithmeticExpr op left right =
+    { from =
+        left.from
+    , to =
+        right.to
+    , value =
+        ArithmeticExpr
+            { left = left
+            , op = op
+            , right = right
+            }
+    }
 
 
 ifExpr : AntParser Expr
@@ -252,7 +303,7 @@ ifExpr =
         )
         |. keyword (Token "if" <| ExpectingKeyword "if")
         |. sps
-        |= lazy (\_ -> located expr)
+        |= lazy (\_ -> expr)
         |. sps
         |= located block
         |. sps
@@ -277,7 +328,7 @@ whileExpr =
         )
         |. keyword (Token "while" <| ExpectingKeyword "while")
         |. sps
-        |= lazy (\_ -> located expr)
+        |= lazy (\_ -> expr)
         |. sps
         |= located block
 
@@ -337,7 +388,7 @@ literalExpr =
                                 |. sps
                                 |. symbol (Token "=" <| ExpectingSymbol "=")
                                 |. sps
-                                |= lazy (\_ -> located expr)
+                                |= lazy (\_ -> expr)
                         , trailing = Optional
                         }
                 ]
@@ -370,7 +421,7 @@ placeOrCallExpr =
             case arguments of
                 Nothing ->
                     place.value
-                
+
                 Just args ->
                     CallExpr
                         { caller = place
@@ -378,12 +429,11 @@ placeOrCallExpr =
                         }
         )
         |= located placeExpr
-        |= ( optional <|
-            succeed identity
-            |. sps
-            |= exprList
-        )
-
+        |= (optional <|
+                succeed identity
+                    |. sps
+                    |= exprList
+           )
 
 
 placeExpr : AntParser Expr
@@ -399,7 +449,7 @@ placeExpr =
                     [ succeed (\accessor -> Loop <| ArrayAccess accessor :: revAccessors)
                         |. symbol (Token "[" <| ExpectingStartOfArrayAccess)
                         |. sps
-                        |= lazy (\_ -> located expr)
+                        |= lazy (\_ -> expr)
                         |. sps
                         |. symbol (Token "]" <| ExpectingEndOfArrayAccess)
                     , succeed (\accessor -> Loop <| StructAccess accessor :: revAccessors)
@@ -438,7 +488,7 @@ varStmt =
                     |. sps
                     |. symbol (Token "=" <| ExpectingSymbol "=")
                     |. sps
-                    |= located expr
+                    |= expr
                     |. sps
                     |. symbol (Token ";" <| ExpectingSymbol ";")
            )
@@ -461,7 +511,7 @@ letStmt =
                     |. sps
                     |. symbol (Token "=" <| ExpectingSymbol "=")
                     |. sps
-                    |= located expr
+                    |= expr
                     |. sps
                     |. symbol (Token ";" <| ExpectingSymbol ";")
            )
@@ -495,7 +545,7 @@ returnStmt =
         |. sps
         |= (inContext ReturnContext <|
                 succeed ReturnStmt
-                    |= lazy (\_ -> located expr)
+                    |= lazy (\_ -> expr)
            )
 
 
@@ -506,7 +556,7 @@ exprList =
         , separator = Token "," <| ExpectingSymbol ","
         , end = Token ")" <| ExpectingSymbol ")"
         , spaces = sps
-        , item = lazy (\_ -> located expr)
+        , item = lazy (\_ -> expr)
         , trailing = Optional
         }
 
@@ -523,7 +573,7 @@ block =
                         |= stmt
                         |. sps
                     , succeed (\e -> Done <| ( List.reverse revStmts, e ))
-                        |= (optional <| located expr)
+                        |= (optional <| expr)
                     ]
             )
         |. sps

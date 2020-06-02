@@ -3,6 +3,7 @@ module AntParserTest exposing (..)
 import AntParser
     exposing
         ( Accessor(..)
+        , ArithmeticOp(..)
         , CleanExpr(..)
         , CleanStmt(..)
         , Context
@@ -73,6 +74,195 @@ testExpr =
 }"""
               <|
                 Ok (LiteralExpr { from = ( 1, 1 ), to = ( 3, 2 ), value = StructLiteral { mappings = Dict.fromList [ ( "key1", ( { from = ( 2, 3 ), to = ( 2, 7 ), value = "key1" }, { from = ( 2, 10 ), to = ( 2, 18 ), value = LiteralExpr { from = ( 2, 10 ), to = ( 2, 18 ), value = StringLiteral "value1" } } ) ) ], name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" } } })
+            ]
+        , describe "ArithmeticExpr"
+            [ test "add"
+                "2 + 3 + 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = AddOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = AddOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "subtract"
+                "2 - 3 - 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = SubtractOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = SubtractOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "mixed add and subtract"
+                "2 + 3 - 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = AddOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = SubtractOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "multiply"
+                "2 * 3 * 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = MultiplyOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = MultiplyOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "divide"
+                "2 / 3 / 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = DivideOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = DivideOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "mixed multiply and divide"
+                "2 * 3 / 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = MultiplyOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        , op = DivideOp
+                        , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "mixed add, subtract, multiply, and divide"
+                "1 + 2 * 3 - 4 / 5"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left =
+                                    CLiteralExpr (IntLiteral 1)
+                                , op = AddOp
+                                , right =
+                                    CArithmeticExpr
+                                        { left = CLiteralExpr (IntLiteral 2)
+                                        , op = MultiplyOp
+                                        , right = CLiteralExpr (IntLiteral 3)
+                                        }
+                                }
+                        , op =
+                            SubtractOp
+                        , right =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 4)
+                                , op = DivideOp
+                                , right = CLiteralExpr (IntLiteral 5)
+                                }
+                        }
+                    )
+            , test "Bitwise AND"
+                "1 & 2 & 3"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 1)
+                                , op = BitwiseAndOp
+                                , right = CLiteralExpr (IntLiteral 2)
+                                }
+                        , op = BitwiseAndOp
+                        , right = CLiteralExpr (IntLiteral 3)
+                        }
+                    )
+            , test "Bitwise OR"
+                "1 | 2 | 3"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 1)
+                                , op = BitwiseOrOp
+                                , right = CLiteralExpr (IntLiteral 2)
+                                }
+                        , op = BitwiseOrOp
+                        , right = CLiteralExpr (IntLiteral 3)
+                        }
+                    )
+            , test "mixed Bitwise AND and OR"
+                "1 | 2 & 3"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left = CLiteralExpr (IntLiteral 1)
+                        , op = BitwiseOrOp
+                        , right =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = BitwiseAndOp
+                                , right = CLiteralExpr (IntLiteral 3)
+                                }
+                        }
+                    )
+            , test "mixed arithmetic operations"
+                "1 & 5 + 2 | 3 / 4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 1)
+                                , op = BitwiseAndOp
+                                , right =
+                                    CArithmeticExpr
+                                        { left = CLiteralExpr (IntLiteral 5)
+                                        , op = AddOp
+                                        , right = CLiteralExpr (IntLiteral 2)
+                                        }
+                                }
+                        , op = BitwiseOrOp
+                        , right =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 3)
+                                , op = DivideOp
+                                , right = CLiteralExpr (IntLiteral 4)
+                                }
+                        }
+                    )
             ]
         , describe "IfExpr"
             [ testWithLocation "if + else"

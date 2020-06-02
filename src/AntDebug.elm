@@ -8,7 +8,7 @@ source =
     """
 var a =
   if true {
-    1
+    1 + 2 * 3
   } else {
     0
   };
