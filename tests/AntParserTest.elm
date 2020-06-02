@@ -2,7 +2,8 @@ module AntParserTest exposing (..)
 
 import AntParser
     exposing
-        ( CleanExpr(..)
+        ( Accessor(..)
+        , CleanExpr(..)
         , CleanStmt(..)
         , Context
         , Expr(..)
@@ -220,6 +221,74 @@ testExpr =
                             , Just (CLiteralExpr (IntLiteral 1))
                             )
                         , condition = CLiteralExpr (BoolLiteral True)
+                        }
+                    )
+            ]
+        , describe "PlaceExpr"
+            [ test "array access"
+                "a[0]"
+              <|
+                Ok
+                    (CPlaceExpr
+                        { name = "a"
+                        , accessors =
+                            [ ArrayAccess
+                                { from = ( 1, 3 )
+                                , to = ( 1, 4 )
+                                , value = LiteralExpr { from = ( 1, 3 ), to = ( 1, 4 ), value = IntLiteral 0 }
+                                }
+                            ]
+                        }
+                    )
+            , test "struct access"
+                "a.fieldName"
+              <|
+                Ok
+                    (CPlaceExpr
+                        { accessors =
+                            [ StructAccess { from = ( 1, 3 ), to = ( 1, 12 ), value = "fieldName" } ]
+                        , name = "a"
+                        }
+                    )
+            , test "string of struct accesses"
+                "a.fieldName1.fieldName2"
+              <|
+                Ok
+                    (CPlaceExpr
+                        { accessors =
+                            [ StructAccess { from = ( 1, 3 ), to = ( 1, 13 ), value = "fieldName1" }
+                            , StructAccess { from = ( 1, 14 ), to = ( 1, 24 ), value = "fieldName2" }
+                            ]
+                        , name = "a"
+                        }
+                    )
+            , test "mixed accesses"
+                "a[0].fieldName1.fieldName2[1][2]"
+              <|
+                Ok
+                    (CPlaceExpr
+                        { accessors =
+                            [ ArrayAccess
+                                { from = ( 1, 3 )
+                                , to = ( 1, 4 )
+                                , value = LiteralExpr { from = ( 1, 3 ), to = ( 1, 4 ), value = IntLiteral 0 }
+                                }
+                            , StructAccess { from = ( 1, 6 ), to = ( 1, 16 ), value = "fieldName1" }
+                            , StructAccess { from = ( 1, 17 ), to = ( 1, 27 ), value = "fieldName2" }
+                            , ArrayAccess
+                                { from = ( 1, 28 )
+                                , to = ( 1, 29 )
+                                , value =
+                                    LiteralExpr { from = ( 1, 28 ), to = ( 1, 29 ), value = IntLiteral 1 }
+                                }
+                            , ArrayAccess
+                                { from = ( 1, 31 )
+                                , to = ( 1, 32 )
+                                , value =
+                                    LiteralExpr { from = ( 1, 31 ), to = ( 1, 32 ), value = IntLiteral 2 }
+                                }
+                            ]
+                        , name = "a"
                         }
                     )
             ]

@@ -6,6 +6,7 @@ module AntParser exposing
     , Expr(..)
     , Literal(..)
     , Pattern(..)
+    , Accessor(..)
     , Problem(..)
     , Stmt(..)
     , Type(..)
@@ -58,10 +59,6 @@ type Expr
     | PlaceExpr
         { name : Located String
         , accessors : List Accessor
-        }
-    | ArrayIndexExpr
-        { array : Located Expr
-        , index : Located Expr
         }
     | BlockExpr (Located Block)
 
@@ -871,12 +868,6 @@ cleanExpr e =
                     name.value
                 , accessors =
                     accessors
-                }
-
-        ArrayIndexExpr { array, index } ->
-            CArrayIndexExpr
-                { array = cleanExpr array
-                , index = cleanExpr index
                 }
 
         BlockExpr b ->
