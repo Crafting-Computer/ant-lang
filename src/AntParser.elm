@@ -236,7 +236,7 @@ expr =
         [ ifExpr
         , whileExpr
         , literalExpr
-        , placeExpr
+        , placeOrCallExpr
         ]
 
 
@@ -361,6 +361,29 @@ pattern =
         , succeed WildcardPattern
             |. symbol (Token "_" <| ExpectingWildcard)
         ]
+
+
+placeOrCallExpr : AntParser Expr
+placeOrCallExpr =
+    succeed
+        (\place arguments ->
+            case arguments of
+                Nothing ->
+                    place.value
+                
+                Just args ->
+                    CallExpr
+                        { caller = place
+                        , arguments = args
+                        }
+        )
+        |= located placeExpr
+        |= ( optional <|
+            succeed identity
+            |. sps
+            |= exprList
+        )
+
 
 
 placeExpr : AntParser Expr

@@ -291,6 +291,53 @@ testExpr =
                         , name = "a"
                         }
                     )
+            , describe "CallExpr"
+                [ test "no argument"
+                    "a()"
+                  <|
+                    Ok (CCallExpr { arguments = [], caller = CPlaceExpr { accessors = [], name = "a" } })
+                , test "1 argument"
+                    "a(0)"
+                  <|
+                    Ok
+                        (CCallExpr
+                            { arguments = [ CLiteralExpr (IntLiteral 0) ]
+                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            }
+                        )
+                , test "2 arguments"
+                    "a(0, 1)"
+                  <|
+                    Ok
+                        (CCallExpr
+                            { arguments =
+                                [ CLiteralExpr (IntLiteral 0)
+                                , CLiteralExpr (IntLiteral 1)
+                                ]
+                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            }
+                        )
+                , test "more complicated arguments"
+                    "a(if true { 0 } else { 1 }, b(2, 3))"
+                  <|
+                    Ok
+                        (CCallExpr
+                            { arguments =
+                                [ CIfExpr
+                                    { condition = CLiteralExpr (BoolLiteral True)
+                                    , elseBody =
+                                        CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                    , thenBody = ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                    }
+                                , CCallExpr
+                                    { arguments = [ CLiteralExpr (IntLiteral 2), CLiteralExpr (IntLiteral 3) ]
+                                    , caller = CPlaceExpr { accessors = [], name = "b" }
+                                    }
+                                ]
+                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            }
+                        )
+                ]
             ]
         ]
 
