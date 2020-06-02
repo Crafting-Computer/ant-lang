@@ -1,12 +1,13 @@
 module AntParser exposing
     ( Accessor(..)
+    , ArithmeticOp(..)
+    , ComparisonOp(..)
     , CleanExpr(..)
     , CleanStmt(..)
     , Context(..)
     , Decl(..)
     , Expr(..)
     , Literal(..)
-    , ArithmeticOp(..)
     , Pattern(..)
     , Problem(..)
     , Stmt(..)
@@ -133,7 +134,7 @@ type ComparisonOp
     = EqualOp
     | NotEqualOp
     | GreaterThanOp
-    | LessThanOP
+    | LessThanOp
     | GreaterThanOrEqualOp
     | LessThanOrEqualOp
 
@@ -271,9 +272,48 @@ expr =
                 (symbol <| Token "|" <| ExpectingSymbol "|")
               <|
                 formArithmeticExpr BitwiseOrOp
+            , Pratt.infixLeft 7
+                (symbol <| Token "==" <| ExpectingSymbol "==")
+              <|
+                formComparisonExpr EqualOp
+            , Pratt.infixLeft 7
+                (symbol <| Token "!=" <| ExpectingSymbol "!=")
+              <|
+                formComparisonExpr NotEqualOp
+            , Pratt.infixLeft 7
+                (symbol <| Token ">=" <| ExpectingSymbol ">=")
+              <|
+                formComparisonExpr GreaterThanOrEqualOp
+            , Pratt.infixLeft 7
+                (symbol <| Token "<=" <| ExpectingSymbol "<=")
+              <|
+                formComparisonExpr LessThanOrEqualOp
+            , Pratt.infixLeft 7
+                (symbol <| Token ">" <| ExpectingSymbol ">")
+              <|
+                formComparisonExpr GreaterThanOp
+            , Pratt.infixLeft 7
+                (symbol <| Token "<" <| ExpectingSymbol "<")
+              <|
+                formComparisonExpr LessThanOp
             ]
         , spaces = sps
         }
+
+
+formComparisonExpr : ComparisonOp -> Located Expr -> Located Expr -> Located Expr
+formComparisonExpr op left right =
+    { from =
+        left.from
+    , to =
+        right.to
+    , value =
+        ComparisonExpr
+            { left = left
+            , op = op
+            , right = right
+            }
+    }
 
 
 formArithmeticExpr : ArithmeticOp -> Located Expr -> Located Expr -> Located Expr

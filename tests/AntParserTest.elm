@@ -6,6 +6,7 @@ import AntParser
         , ArithmeticOp(..)
         , CleanExpr(..)
         , CleanStmt(..)
+        , ComparisonOp(..)
         , Context
         , Expr(..)
         , Literal(..)
@@ -259,6 +260,88 @@ testExpr =
                             CArithmeticExpr
                                 { left = CLiteralExpr (IntLiteral 3)
                                 , op = DivideOp
+                                , right = CLiteralExpr (IntLiteral 4)
+                                }
+                        }
+                    )
+            ]
+        , describe "ComparisonExpr"
+            [ test "equal"
+                "0 == 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = EqualOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "not equal"
+                "0 != 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = NotEqualOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "greater than or equal"
+                "0 >= 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = GreaterThanOrEqualOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "less than or equal"
+                "0 <= 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = LessThanOrEqualOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "greater than"
+                "0 > 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = GreaterThanOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "less than"
+                "0 < 1"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left = CLiteralExpr (IntLiteral 0)
+                        , op = LessThanOp
+                        , right = CLiteralExpr (IntLiteral 1)
+                        }
+                    )
+            , test "mixed arithmetic and comparison operations"
+                "1 + 2 < 3 * 4"
+              <|
+                Ok
+                    (CComparisonExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 1)
+                                , op = AddOp
+                                , right = CLiteralExpr (IntLiteral 2)
+                                }
+                        , op = LessThanOp
+                        , right =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 3)
+                                , op = MultiplyOp
                                 , right = CLiteralExpr (IntLiteral 4)
                                 }
                         }
