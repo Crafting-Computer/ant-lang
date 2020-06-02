@@ -1,0 +1,238 @@
+module AntParserTest exposing (..)
+
+import AntParser
+    exposing
+        ( CleanExpr(..)
+        , CleanStmt(..)
+        , Context
+        , Expr(..)
+        , Literal(..)
+        , Pattern(..)
+        , Problem(..)
+        , Stmt(..)
+        , cleanExpr
+        )
+import Dict exposing (Dict)
+import Expect exposing (Expectation)
+import Location exposing (Located, dummyLocated)
+import Parser.Advanced exposing (DeadEnd)
+import Test exposing (..)
+
+
+testExpr : Test
+testExpr =
+    let
+        testWithLocation : String -> String -> Result (List (DeadEnd Context Problem)) Expr -> Test
+        testWithLocation description src expected =
+            Test.test
+                description
+                (\_ -> Expect.equal expected (AntParser.parseExpr src))
+
+        test : String -> String -> Result (List (DeadEnd Context Problem)) CleanExpr -> Test
+        test description src expected =
+            Test.test
+                description
+                (\_ -> Expect.equal expected (Result.map (AntParser.cleanExpr << dummyLocated) <| AntParser.parseExpr src))
+    in
+    describe "Test Expr"
+        [ describe "LiteralExpr"
+            [ testWithLocation "Char"
+                "'a'"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 4 ), value = CharLiteral 'a' }
+            , testWithLocation "String"
+                "\"it's a nice day!\""
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 19 ), value = StringLiteral "it's a nice day!" }
+            , testWithLocation "Int"
+                "38391900"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 9 ), value = IntLiteral 38391900 }
+            , testWithLocation "Bool : true"
+                "true"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 5 ), value = BoolLiteral True }
+            , testWithLocation "Bool : false"
+                "false"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 6 ), value = BoolLiteral False }
+            , testWithLocation "struct"
+                """MyStruct {
+  key1 = "value1",
+}"""
+              <|
+                Ok (LiteralExpr { from = ( 1, 1 ), to = ( 3, 2 ), value = StructLiteral { mappings = Dict.fromList [ ( "key1", ( { from = ( 2, 3 ), to = ( 2, 7 ), value = "key1" }, { from = ( 2, 10 ), to = ( 2, 18 ), value = LiteralExpr { from = ( 2, 10 ), to = ( 2, 18 ), value = StringLiteral "value1" } } ) ) ], name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" } } })
+            ]
+        , describe "IfExpr"
+            [ testWithLocation "if + else"
+                """if true {
+  1
+} else {
+  0
+}"""
+              <|
+                Ok
+                    (IfExpr
+                        { condition =
+                            { from = ( 1, 4 ), to = ( 1, 8 ), value = LiteralExpr { from = ( 1, 4 ), to = ( 1, 8 ), value = BoolLiteral True } }
+                        , thenBody =
+                            { from = ( 1, 9 ), to = ( 3, 2 ), value = ( [], Just { from = ( 2, 3 ), to = ( 2, 4 ), value = LiteralExpr { from = ( 2, 3 ), to = ( 2, 4 ), value = IntLiteral 1 } } ) }
+                        , elseBody =
+                            { from = ( 3, 8 ), to = ( 5, 2 ), value = BlockExpr { from = ( 3, 8 ), to = ( 5, 2 ), value = ( [], Just <| { from = ( 4, 3 ), to = ( 4, 4 ), value = LiteralExpr { from = ( 4, 3 ), to = ( 4, 4 ), value = IntLiteral 0 } } ) } }
+                        }
+                    )
+            , test "if + 1 else if + else"
+                """if true {
+  2
+} else if false {
+  1
+} else {
+  0
+}"""
+              <|
+                Ok
+                    (CIfExpr
+                        { condition =
+                            CLiteralExpr (BoolLiteral True)
+                        , elseBody =
+                            CIfExpr
+                                { condition =
+                                    CLiteralExpr (BoolLiteral False)
+                                , elseBody = CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                , thenBody = ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                }
+                        , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
+                        }
+                    )
+            ]
+        , test "if + 2 else if + else"
+            """if true {
+  3
+} else if false {
+  2
+} else if true {
+  1
+} else {
+  0
+}"""
+          <|
+            Ok
+                (CIfExpr
+                    { condition =
+                        CLiteralExpr (BoolLiteral True)
+                    , elseBody =
+                        CIfExpr
+                            { condition =
+                                CLiteralExpr (BoolLiteral False)
+                            , elseBody =
+                                CIfExpr
+                                    { condition =
+                                        CLiteralExpr (BoolLiteral True)
+                                    , elseBody =
+                                        CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                    , thenBody =
+                                        ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                    }
+                            , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
+                            }
+                    , thenBody = ( [], Just (CLiteralExpr (IntLiteral 3)) )
+                    }
+                )
+        , describe "while and block"
+            [ test "body containing several stmts"
+                """while true {
+    var a = 0;
+    let a = 1;
+}"""
+              <|
+                Ok
+                    (CWhileExpr
+                        { body =
+                            ( [ CVarStmt
+                                    { target =
+                                        IdentifierPattern
+                                            { mutable = False, name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "a" } }
+                                    , value = CLiteralExpr (IntLiteral 0)
+                                    }
+                              , CLetStmt
+                                    { target =
+                                        CPlaceExpr { accessors = [], name = "a" }
+                                    , value = CLiteralExpr (IntLiteral 1)
+                                    }
+                              ]
+                            , Nothing
+                            )
+                        , condition = CLiteralExpr (BoolLiteral True)
+                        }
+                    )
+            , test "body containing several stmts ended with expr"
+                """while true {
+    var a = 0;
+    let a = 1;
+    a
+}"""
+              <|
+                Ok
+                    (CWhileExpr
+                        { body =
+                            ( [ CVarStmt
+                                    { target =
+                                        IdentifierPattern
+                                            { mutable = False, name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "a" } }
+                                    , value = CLiteralExpr (IntLiteral 0)
+                                    }
+                              , CLetStmt
+                                    { target =
+                                        CPlaceExpr { accessors = [], name = "a" }
+                                    , value = CLiteralExpr (IntLiteral 1)
+                                    }
+                              ]
+                            , Just <|
+                                CPlaceExpr
+                                    { name =
+                                        "a"
+                                    , accessors =
+                                        []
+                                    }
+                            )
+                        , condition = CLiteralExpr (BoolLiteral True)
+                        }
+                    )
+            , test "body containing single expr"
+                """while true {
+    1
+}"""
+              <|
+                Ok
+                    (CWhileExpr
+                        { body =
+                            ( []
+                            , Just (CLiteralExpr (IntLiteral 1))
+                            )
+                        , condition = CLiteralExpr (BoolLiteral True)
+                        }
+                    )
+            ]
+        ]
+
+
+
+-- testStmts : Test
+-- testStmts =
+--   let
+--     test : String -> String -> Result (List (DeadEnd Context Problem)) (List Stmt) -> Test
+--     test description src expected =
+--       Test.test
+--       description
+--       (\_ -> Expect.equal expected (AntParser.parseStmts src))
+--   in
