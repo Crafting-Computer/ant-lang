@@ -13,7 +13,7 @@ var a =
     0
   };
 
-let a = 3;
+let a = true && false && false;
 
 var b =
   if true {

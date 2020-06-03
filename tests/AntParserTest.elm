@@ -4,6 +4,7 @@ import AntParser
     exposing
         ( Accessor(..)
         , ArithmeticOp(..)
+        , BooleanOp(..)
         , CleanExpr(..)
         , CleanStmt(..)
         , ComparisonOp(..)
@@ -344,6 +345,38 @@ testExpr =
                                 , op = MultiplyOp
                                 , right = CLiteralExpr (IntLiteral 4)
                                 }
+                        }
+                    )
+            ]
+        , describe "boolean operations"
+            [ test "boolean AND"
+                "true && false && false"
+              <|
+                Ok
+                    (CBooleanExpr
+                        { left =
+                            CBooleanExpr
+                                { left = CLiteralExpr (BoolLiteral True)
+                                , op = BooleanAndOp
+                                , right = CLiteralExpr (BoolLiteral False)
+                                }
+                        , op = BooleanAndOp
+                        , right = CLiteralExpr (BoolLiteral False)
+                        }
+                    )
+            ,test "boolean OR"
+                "true || false || false"
+              <|
+                Ok
+                    (CBooleanExpr
+                        { left =
+                            CBooleanExpr
+                                { left = CLiteralExpr (BoolLiteral True)
+                                , op = BooleanOrOp
+                                , right = CLiteralExpr (BoolLiteral False)
+                                }
+                        , op = BooleanOrOp
+                        , right = CLiteralExpr (BoolLiteral False)
                         }
                     )
             ]

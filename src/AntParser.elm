@@ -1,9 +1,10 @@
 module AntParser exposing
     ( Accessor(..)
     , ArithmeticOp(..)
-    , ComparisonOp(..)
     , CleanExpr(..)
     , CleanStmt(..)
+    , ComparisonOp(..)
+    , BooleanOp(..)
     , Context(..)
     , Decl(..)
     , Expr(..)
@@ -248,15 +249,8 @@ expr =
                 , placeOrCallExpr
                 ]
         , andThenOneOf =
-            [ Pratt.infixLeft 12
-                (symbol <| Token "+" <| ExpectingSymbol "+")
-              <|
-                formArithmeticExpr AddOp
-            , Pratt.infixLeft 12
-                (symbol <| Token "-" <| ExpectingSymbol "-")
-              <|
-                formArithmeticExpr SubtractOp
-            , Pratt.infixLeft 13
+            {- arithmetic operators -}
+            [ Pratt.infixLeft 13
                 (symbol <| Token "*" <| ExpectingSymbol "*")
               <|
                 formArithmeticExpr MultiplyOp
@@ -264,14 +258,24 @@ expr =
                 (symbol <| Token "/" <| ExpectingSymbol "/")
               <|
                 formArithmeticExpr DivideOp
+            , Pratt.infixLeft 12
+                (symbol <| Token "+" <| ExpectingSymbol "+")
+              <|
+                formArithmeticExpr AddOp
+            , Pratt.infixLeft 12
+                (symbol <| Token "-" <| ExpectingSymbol "-")
+              <|
+                formArithmeticExpr SubtractOp
             , Pratt.infixLeft 10
-                (symbol <| Token "&" <| ExpectingSymbol "&")
+                (backtrackable <| symbol <| Token "&" <| ExpectingSymbol "&")
               <|
                 formArithmeticExpr BitwiseAndOp
             , Pratt.infixLeft 8
-                (symbol <| Token "|" <| ExpectingSymbol "|")
+                (backtrackable <| symbol <| Token "|" <| ExpectingSymbol "|")
               <|
                 formArithmeticExpr BitwiseOrOp
+            
+            {- comparison operators -}
             , Pratt.infixLeft 7
                 (symbol <| Token "==" <| ExpectingSymbol "==")
               <|
@@ -296,34 +300,49 @@ expr =
                 (symbol <| Token "<" <| ExpectingSymbol "<")
               <|
                 formComparisonExpr LessThanOp
+            
+            {- boolean operators -}
+            , Pratt.infixLeft 6
+                (symbol <| Token "&&" <| ExpectingSymbol "&&")
+              <|
+                formBooleanExpr BooleanAndOp
+            , Pratt.infixLeft 5
+                (symbol <| Token "||" <| ExpectingSymbol "||")
+              <|
+                formBooleanExpr BooleanOrOp
             ]
         , spaces = sps
         }
 
 
+formBooleanExpr : BooleanOp -> Located Expr -> Located Expr -> Located Expr
+formBooleanExpr =
+    formBinaryExpr BooleanExpr
+
+
 formComparisonExpr : ComparisonOp -> Located Expr -> Located Expr -> Located Expr
-formComparisonExpr op left right =
-    { from =
-        left.from
-    , to =
-        right.to
-    , value =
-        ComparisonExpr
-            { left = left
-            , op = op
-            , right = right
-            }
-    }
+formComparisonExpr =
+    formBinaryExpr ComparisonExpr
 
 
 formArithmeticExpr : ArithmeticOp -> Located Expr -> Located Expr -> Located Expr
-formArithmeticExpr op left right =
+formArithmeticExpr =
+    formBinaryExpr ArithmeticExpr
+
+
+formBinaryExpr :
+    ({ left : Located Expr, op : a, right : Located Expr } -> Expr)
+    -> a
+    -> Located Expr
+    -> Located Expr
+    -> Located Expr
+formBinaryExpr f op left right =
     { from =
         left.from
     , to =
         right.to
     , value =
-        ArithmeticExpr
+        f
             { left = left
             , op = op
             , right = right
