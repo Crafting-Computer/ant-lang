@@ -46,12 +46,24 @@ testExpr =
                 Ok <|
                     LiteralExpr <|
                         { from = ( 1, 1 ), to = ( 1, 4 ), value = CharLiteral 'a' }
+            , testWithLocation "unterminated Char"
+                "'a"
+              <|
+                Err [ { col = 3, contextStack = [], problem = ExpectingEndOfChar, row = 1 } ]
+            , testWithLocation "too many Char"
+                "'abc'"
+              <|
+                Err [ { col = 3, contextStack = [], problem = ExpectingEndOfChar, row = 1 } ]
             , testWithLocation "String"
                 "\"it's a nice day!\""
               <|
                 Ok <|
                     LiteralExpr <|
                         { from = ( 1, 1 ), to = ( 1, 19 ), value = StringLiteral "it's a nice day!" }
+            , testWithLocation "unterminated String"
+                "\"it's a nice day!"
+              <|
+                Err [ { col = 18, contextStack = [], problem = ExpectingEndOfString, row = 1 } ]
             , testWithLocation "Positive Int"
                 "38391900"
               <|
@@ -418,7 +430,7 @@ testExpr =
                         , right = CLiteralExpr (BoolLiteral False)
                         }
                     )
-            ,test "boolean OR"
+            , test "boolean OR"
                 "true || false || false"
               <|
                 Ok
@@ -475,9 +487,8 @@ testExpr =
                         , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
                         }
                     )
-            ]
-        , test "if + 2 else if + else"
-            """if true {
+            , test "if + 2 else if + else"
+                """if true {
   3
 } else if false {
   2
@@ -486,29 +497,42 @@ testExpr =
 } else {
   0
 }"""
-          <|
-            Ok
-                (CIfExpr
-                    { condition =
-                        CLiteralExpr (BoolLiteral True)
-                    , elseBody =
-                        CIfExpr
-                            { condition =
-                                CLiteralExpr (BoolLiteral False)
-                            , elseBody =
-                                CIfExpr
-                                    { condition =
-                                        CLiteralExpr (BoolLiteral True)
-                                    , elseBody =
-                                        CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
-                                    , thenBody =
-                                        ( [], Just (CLiteralExpr (IntLiteral 1)) )
-                                    }
-                            , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
-                            }
-                    , thenBody = ( [], Just (CLiteralExpr (IntLiteral 3)) )
-                    }
-                )
+              <|
+                Ok
+                    (CIfExpr
+                        { condition =
+                            CLiteralExpr (BoolLiteral True)
+                        , elseBody =
+                            CIfExpr
+                                { condition =
+                                    CLiteralExpr (BoolLiteral False)
+                                , elseBody =
+                                    CIfExpr
+                                        { condition =
+                                            CLiteralExpr (BoolLiteral True)
+                                        , elseBody =
+                                            CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                        , thenBody =
+                                            ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                        }
+                                , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
+                                }
+                        , thenBody = ( [], Just (CLiteralExpr (IntLiteral 3)) )
+                        }
+                    )
+            , test "expecting start of block"
+                "if true false"
+              <|
+                Err [ { col = 9, contextStack = [], problem = ExpectingStartOfBlock, row = 1 } ]
+            , test "expecting end of block"
+                "if true { 0 } else { 1 "
+              <|
+                Err [ { col = 24, contextStack = [], problem = ExpectingEndOfBlock, row = 1 } ]
+            , test "expecting else branch"
+                "if true { 0 }"
+              <|
+                Err [ { col = 14, contextStack = [], problem = ExpectingKeyword "else", row = 1 } ]
+            ]
         , describe "while and block"
             [ test "body containing several stmts"
                 """while true {
