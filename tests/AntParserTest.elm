@@ -808,4 +808,98 @@ testDecl =
                         }
                     )
             ]
+        , describe "impl decalration"
+            [ test "one method"
+                """impl MyStruct {
+    fn getA(self: MyStruct) : Int {
+        self.a
+    }
+}"""
+              <|
+                Ok
+                    (CImplDecl
+                        { subroutines =
+                            [ { body =
+                                    ( []
+                                    , Just
+                                        (CPlaceExpr
+                                            { accessors = [ StructAccess { from = ( 3, 14 ), to = ( 3, 15 ), value = "a" } ]
+                                            , name = "self"
+                                            }
+                                        )
+                                    )
+                              , name = "getA"
+                              , parameters =
+                                    [ ( IdentifierPattern
+                                            { mutable = False
+                                            , name = { from = ( 2, 13 ), to = ( 2, 17 ), value = "self" }
+                                            }
+                                      , NamedType { from = ( 2, 19 ), to = ( 2, 27 ), value = "MyStruct" }
+                                      )
+                                    ]
+                              , returnType = IntType
+                              }
+                            ]
+                        , target = "MyStruct"
+                        }
+                    )
+            , test "one function"
+                """impl MyStruct {
+    fn bar() : String {
+        "MyStruct.bar() was called"
+    }
+}"""
+              <|
+                Ok
+                    (CImplDecl
+                        { subroutines =
+                            [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
+                              , name = "bar"
+                              , parameters = []
+                              , returnType = StringType
+                              }
+                            ]
+                        , target = "MyStruct"
+                        }
+                    )
+            , test "1 method + 1 function"
+                """impl MyStruct {
+    fn bar() : String {
+        "MyStruct.bar() was called"
+    }
+    fn getA(self: MyStruct) : Int {
+        self.a
+    }
+}"""
+              <|
+                Ok
+                    (CImplDecl
+                        { subroutines =
+                            [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
+                              , name = "bar"
+                              , parameters = []
+                              , returnType = StringType
+                              }
+                            , { body =
+                                    ( []
+                                    , Just
+                                        (CPlaceExpr
+                                            { accessors = [ StructAccess { from = ( 6, 14 ), to = ( 6, 15 ), value = "a" } ]
+                                            , name = "self"
+                                            }
+                                        )
+                                    )
+                              , name = "getA"
+                              , parameters =
+                                    [ ( IdentifierPattern { mutable = False, name = { from = ( 5, 13 ), to = ( 5, 17 ), value = "self" } }
+                                      , NamedType { from = ( 5, 19 ), to = ( 5, 27 ), value = "MyStruct" }
+                                      )
+                                    ]
+                              , returnType = IntType
+                              }
+                            ]
+                        , target = "MyStruct"
+                        }
+                    )
+            ]
         ]

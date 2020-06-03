@@ -8,6 +8,7 @@ module AntParser exposing
     , ComparisonOp(..)
     , Context(..)
     , Decl(..)
+    , FunctionDecl
     , Expr(..)
     , Literal(..)
     , Pattern(..)
@@ -92,16 +93,19 @@ type Decl
         { name : Located String
         , fields : Dict String ( Located String, Located Type )
         }
-    | FnDecl
-        { name : Located String
-        , parameters : List ( Located Pattern, Located Type )
-        , returnType : Located Type
-        , body : Located Block
-        }
+    | FnDecl FunctionDecl
     | ImplDecl
         { target : Located String
-        , subroutines : List Decl
+        , subroutines : List FunctionDecl
         }
+
+
+type alias FunctionDecl =
+    { name : Located String
+    , parameters : List ( Located Pattern, Located Type )
+    , returnType : Located Type
+    , body : Located Block
+    }
 
 
 type Type
@@ -110,6 +114,7 @@ type Type
     | CharType
     | StringType
     | UnitType
+    | NamedType (Located String)
 
 
 type Pattern
@@ -250,6 +255,7 @@ decl =
     oneOf
         [ fnDecl
         , structDecl
+        , implDecl
         ]
 
 
@@ -290,14 +296,18 @@ structDecl =
 
 fnDecl : AntParser Decl
 fnDecl =
+    map FnDecl functionDecl
+
+
+functionDecl : AntParser FunctionDecl
+functionDecl =
     succeed
         (\name parameters returnType body ->
-            FnDecl
-                { name = name
-                , parameters = parameters
-                , returnType = returnType
-                , body = body
-                }
+            { name = name
+            , parameters = parameters
+            , returnType = returnType
+            , body = body
+            }
         )
         |. keyword (Token "fn" <| ExpectingKeyword "fn")
         |. sps
@@ -325,6 +335,29 @@ fnDecl =
         |= located block
 
 
+implDecl : AntParser Decl
+implDecl =
+    succeed
+    (\target subroutines ->
+        ImplDecl
+            { target = target
+            , subroutines = subroutines
+            }
+    )
+    |. keyword (Token "impl" <| ExpectingKeyword "impl")
+    |. sps
+    |= tyName ExpectingStructName
+    |. sps
+    |= sequence
+        { start = Token "{" <| ExpectingSymbol "{"
+        , separator = Token "" <| ExpectingSymbol ""
+        , end = Token "}" <| ExpectingSymbol "}"
+        , spaces = sps
+        , item = functionDecl
+        , trailing = Optional
+        }
+
+
 ty : AntParser Type
 ty =
     oneOf
@@ -333,6 +366,7 @@ ty =
         , map (\_ -> StringType) <| keyword (Token "String" <| ExpectingType)
         , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
         , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
+        , map (\name -> NamedType name) <| tyName ExpectingType
         ]
 
 
@@ -1000,7 +1034,7 @@ showProblem p =
 
         ExpectingType ->
             "a type"
-        
+
         ExpectingFunctionName ->
             "a function name"
 
@@ -1088,16 +1122,19 @@ type CleanDecl
         { name : String
         , fields : Dict String Type
         }
-    | CFnDecl
-        { name : String
-        , parameters : List ( Pattern, Type )
-        , returnType : Type
-        , body : CleanBlock
-        }
+    | CFnDecl CFunctionDecl
     | CImplDecl
         { target : String
-        , subroutines : List CleanDecl
+        , subroutines : List CFunctionDecl
         }
+
+
+type alias CFunctionDecl =
+    { name : String
+    , parameters : List ( Pattern, Type )
+    , returnType : Type
+    , body : CleanBlock
+    }
 
 
 type alias CleanBlock =
@@ -1236,23 +1273,27 @@ cleanDecl d =
                         fields
                 }
 
-        FnDecl { name, parameters, returnType, body } ->
-            CFnDecl
-                { name = name.value
-                , parameters =
-                    List.map
-                        (\( paramName, paramType ) ->
-                            ( paramName.value, paramType.value )
-                        )
-                        parameters
-                , returnType = returnType.value
-                , body =
-                    cleanBlock body
-                }
+        FnDecl f ->
+            CFnDecl <| cleanFunctionDecl f
 
         ImplDecl { target, subroutines } ->
             CImplDecl
                 { target = target.value
                 , subroutines =
-                    List.map cleanDecl subroutines
+                    List.map cleanFunctionDecl subroutines
                 }
+
+
+cleanFunctionDecl : FunctionDecl -> CFunctionDecl
+cleanFunctionDecl { name, parameters, returnType, body } =
+    { name = name.value
+    , parameters =
+        List.map
+            (\( paramName, paramType ) ->
+                ( paramName.value, paramType.value )
+            )
+            parameters
+    , returnType = returnType.value
+    , body =
+        cleanBlock body
+    }
