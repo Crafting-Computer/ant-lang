@@ -2,9 +2,9 @@ module AntParser exposing
     ( Accessor(..)
     , ArithmeticOp(..)
     , BooleanOp(..)
+    , CleanDecl(..)
     , CleanExpr(..)
     , CleanStmt(..)
-    , CleanDecl(..)
     , ComparisonOp(..)
     , Context(..)
     , Decl(..)
@@ -14,11 +14,11 @@ module AntParser exposing
     , Problem(..)
     , Stmt(..)
     , Type(..)
+    , cleanDecl
     , cleanExpr
     , cleanExprs
     , cleanStmt
     , cleanStmts
-    , cleanDecl
     , parseDecl
     , parseDecls
     , parseExpr
@@ -92,9 +92,9 @@ type Decl
         { name : Located String
         , fields : Dict String ( Located String, Located Type )
         }
-    | FunctionDecl
+    | FnDecl
         { name : Located String
-        , parameters : List ( Located String, Located Type )
+        , parameters : List ( Located Pattern, Located Type )
         , returnType : Located Type
         , body : Located Block
         }
@@ -200,6 +200,7 @@ type Problem
     | ExpectingSymbol String
     | ExpectingEOF
     | ExpectingType
+    | ExpectingFunctionName
 
 
 reserved : Set String
@@ -247,7 +248,9 @@ parseDecl src =
 decl : AntParser Decl
 decl =
     oneOf
-        [ structDecl ]
+        [ fnDecl
+        , structDecl
+        ]
 
 
 structDecl : AntParser Decl
@@ -280,21 +283,57 @@ structDecl =
                     |. sps
                     |. symbol (Token ":" <| ExpectingSymbol ":")
                     |. sps
-                    |= parseType
+                    |= located ty
             , trailing = Optional
             }
 
 
-parseType : AntParser (Located Type)
-parseType =
-    located <|
-        oneOf
-            [ map (\_ -> IntType) <| keyword (Token "Int" <| ExpectingType)
-            , map (\_ -> CharType) <| keyword (Token "Char" <| ExpectingType)
-            , map (\_ -> StringType) <| keyword (Token "String" <| ExpectingType)
-            , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
-            , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
-            ]
+fnDecl : AntParser Decl
+fnDecl =
+    succeed
+        (\name parameters returnType body ->
+            FnDecl
+                { name = name
+                , parameters = parameters
+                , returnType = returnType
+                , body = body
+                }
+        )
+        |. keyword (Token "fn" <| ExpectingKeyword "fn")
+        |. sps
+        |= varName ExpectingFunctionName
+        |. sps
+        |= sequence
+            { start = Token "(" <| ExpectingSymbol "("
+            , separator = Token "," <| ExpectingSymbol ","
+            , end = Token ")" <| ExpectingSymbol ")"
+            , spaces = sps
+            , item =
+                succeed Tuple.pair
+                    |= located pattern
+                    |. sps
+                    |. symbol (Token ":" <| ExpectingSymbol ":")
+                    |. sps
+                    |= located ty
+            , trailing = Optional
+            }
+        |. sps
+        |. symbol (Token ":" <| ExpectingSymbol ":")
+        |. sps
+        |= located ty
+        |. sps
+        |= located block
+
+
+ty : AntParser Type
+ty =
+    oneOf
+        [ map (\_ -> IntType) <| keyword (Token "Int" <| ExpectingType)
+        , map (\_ -> CharType) <| keyword (Token "Char" <| ExpectingType)
+        , map (\_ -> StringType) <| keyword (Token "String" <| ExpectingType)
+        , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
+        , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
+        ]
 
 
 parseStmts : String -> Result (List (DeadEnd Context Problem)) (List Stmt)
@@ -961,6 +1000,9 @@ showProblem p =
 
         ExpectingType ->
             "a type"
+        
+        ExpectingFunctionName ->
+            "a function name"
 
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
@@ -1046,9 +1088,9 @@ type CleanDecl
         { name : String
         , fields : Dict String Type
         }
-    | CFunctionDecl
+    | CFnDecl
         { name : String
-        , parameters : List ( String, Type )
+        , parameters : List ( Pattern, Type )
         , returnType : Type
         , body : CleanBlock
         }
@@ -1194,8 +1236,8 @@ cleanDecl d =
                         fields
                 }
 
-        FunctionDecl { name, parameters, returnType, body } ->
-            CFunctionDecl
+        FnDecl { name, parameters, returnType, body } ->
+            CFnDecl
                 { name = name.value
                 , parameters =
                     List.map

@@ -752,19 +752,60 @@ testDecl =
                         }
                     )
             ]
---         , describe "function declaration"
---             [ test "simple"
---                 """fn myFunc(a : Int, b : String) {
---     var c = a * 2;
---     b
--- }"""
---               <|
---                 Err
---                     [ { col = 1
---                       , contextStack = []
---                       , problem = ExpectingKeyword "struct"
---                       , row = 1
---                       }
---                     ]
---             ]
+        , describe "function declaration"
+            [ test "0 arguments"
+                "fn myFunc() : () {}"
+              <|
+                Ok
+                    (CFnDecl
+                        { body = ( [], Nothing )
+                        , name = "myFunc"
+                        , parameters = []
+                        , returnType = UnitType
+                        }
+                    )
+            , test "2 arguments"
+                """fn myFunc(a : Int, b : String) : String {
+    var c = a * 2;
+    b
+}"""
+              <|
+                Ok
+                    (CFnDecl
+                        { body =
+                            ( [ CVarStmt
+                                    { target =
+                                        IdentifierPattern
+                                            { mutable = False
+                                            , name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "c" }
+                                            }
+                                    , value =
+                                        CArithmeticExpr
+                                            { left = CPlaceExpr { accessors = [], name = "a" }
+                                            , op = MultiplyOp
+                                            , right = CLiteralExpr (IntLiteral 2)
+                                            }
+                                    }
+                              ]
+                            , Just (CPlaceExpr { accessors = [], name = "b" })
+                            )
+                        , name = "myFunc"
+                        , parameters =
+                            [ ( IdentifierPattern
+                                    { mutable = False
+                                    , name = { from = ( 1, 11 ), to = ( 1, 12 ), value = "a" }
+                                    }
+                              , IntType
+                              )
+                            , ( IdentifierPattern
+                                    { mutable = False
+                                    , name = { from = ( 1, 20 ), to = ( 1, 21 ), value = "b" }
+                                    }
+                              , StringType
+                              )
+                            ]
+                        , returnType = StringType
+                        }
+                    )
+            ]
         ]
