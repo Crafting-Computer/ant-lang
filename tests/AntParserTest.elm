@@ -5,6 +5,7 @@ import AntParser
         ( Accessor(..)
         , ArithmeticOp(..)
         , BooleanOp(..)
+        , CleanDecl(..)
         , CleanExpr(..)
         , CleanStmt(..)
         , ComparisonOp(..)
@@ -14,13 +15,14 @@ import AntParser
         , Pattern(..)
         , Problem(..)
         , Stmt(..)
+        , Type(..)
         , cleanExpr
         )
-import Dict exposing (Dict)
-import Expect exposing (Expectation)
-import Location exposing (Located, dummyLocated)
+import Dict
+import Expect
+import Location exposing (dummyLocated)
 import Parser.Advanced exposing (DeadEnd)
-import Test exposing (..)
+import Test exposing (Test, describe)
 
 
 testExpr : Test
@@ -99,7 +101,7 @@ testExpr =
   key1 = "value1",
 }"""
               <|
-                Ok (LiteralExpr { from = ( 1, 1 ), to = ( 3, 2 ), value = StructLiteral { mappings = Dict.fromList [ ( "key1", ( { from = ( 2, 3 ), to = ( 2, 7 ), value = "key1" }, { from = ( 2, 10 ), to = ( 2, 18 ), value = LiteralExpr { from = ( 2, 10 ), to = ( 2, 18 ), value = StringLiteral "value1" } } ) ) ], name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" } } })
+                Ok (LiteralExpr { from = ( 1, 1 ), to = ( 3, 2 ), value = StructLiteral { fields = Dict.fromList [ ( "key1", ( { from = ( 2, 3 ), to = ( 2, 7 ), value = "key1" }, { from = ( 2, 10 ), to = ( 2, 18 ), value = LiteralExpr { from = ( 2, 10 ), to = ( 2, 18 ), value = StringLiteral "value1" } } ) ) ], name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" } } })
             ]
         , describe "ArithmeticExpr"
             [ test "add"
@@ -726,13 +728,43 @@ testExpr =
         ]
 
 
-
--- testStmts : Test
--- testStmts =
---   let
---     test : String -> String -> Result (List (DeadEnd Context Problem)) (List Stmt) -> Test
---     test description src expected =
---       Test.test
---       description
---       (\_ -> Expect.equal expected (AntParser.parseStmts src))
---   in
+testDecl : Test
+testDecl =
+    let
+        test : String -> String -> Result (List (DeadEnd Context Problem)) CleanDecl -> Test
+        test description src expected =
+            Test.test
+                description
+                (\_ -> Expect.equal expected (Result.map AntParser.cleanDecl <| AntParser.parseDecl src))
+    in
+    describe "Declarations"
+        [ describe "struct declaration"
+            [ test "simple"
+                """struct MyStruct {
+    a : String,
+    b : Int,
+}"""
+              <|
+                Ok
+                    (CStructDecl
+                        { fields = Dict.fromList [ ( "a", StringType ), ( "b", IntType ) ]
+                        , name = "MyStruct"
+                        }
+                    )
+            ]
+--         , describe "function declaration"
+--             [ test "simple"
+--                 """fn myFunc(a : Int, b : String) {
+--     var c = a * 2;
+--     b
+-- }"""
+--               <|
+--                 Err
+--                     [ { col = 1
+--                       , contextStack = []
+--                       , problem = ExpectingKeyword "struct"
+--                       , row = 1
+--                       }
+--                     ]
+--             ]
+        ]

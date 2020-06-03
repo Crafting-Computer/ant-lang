@@ -6,28 +6,19 @@ import Html exposing (div, pre, text)
 
 source =
     """
-var a =
-  if true {
-    1 + 2 * 3
-  } else {
-    0
-  };
-
-let a = true && false && false;
-
-var b =
-  if true {
-    2
-  } else if false {
-    1
-  } else {
-    0
-  };
-  """
+struct MyStruct {
+    a : String,
+    b : Int,
+}
+struct MyStruct2 {
+    a : String,
+    b : Int,
+}
+"""
 
 
 main =
-    case AntParser.parseStmts source of
+    case AntParser.parseDecls source of
         Err err ->
             div []
                 [ pre []

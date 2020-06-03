@@ -4,6 +4,7 @@ module AntParser exposing
     , BooleanOp(..)
     , CleanExpr(..)
     , CleanStmt(..)
+    , CleanDecl(..)
     , ComparisonOp(..)
     , Context(..)
     , Decl(..)
@@ -17,6 +18,9 @@ module AntParser exposing
     , cleanExprs
     , cleanStmt
     , cleanStmts
+    , cleanDecl
+    , parseDecl
+    , parseDecls
     , parseExpr
     , parseStmts
     , showDeadEnds
@@ -86,7 +90,7 @@ type Stmt
 type Decl
     = StructDecl
         { name : Located String
-        , mappings : Dict String ( Located String, Located Type )
+        , fields : Dict String ( Located String, Located Type )
         }
     | FunctionDecl
         { name : Located String
@@ -94,12 +98,17 @@ type Decl
         , returnType : Located Type
         , body : Located Block
         }
+    | ImplDecl
+        { target : Located String
+        , subroutines : List Decl
+        }
 
 
 type Type
     = IntType
     | BoolType
     | CharType
+    | StringType
     | UnitType
 
 
@@ -118,7 +127,7 @@ type Literal
     | BoolLiteral Bool
     | StructLiteral
         { name : Located String
-        , mappings : Dict String ( Located String, Located Expr )
+        , fields : Dict String ( Located String, Located Expr )
         }
 
 
@@ -190,6 +199,7 @@ type Problem
     | ExpectingKeyword String
     | ExpectingSymbol String
     | ExpectingEOF
+    | ExpectingType
 
 
 reserved : Set String
@@ -202,6 +212,89 @@ reserved =
         , "while"
         , "mut"
         ]
+
+
+parseDecls : String -> Result (List (DeadEnd Context Problem)) (List Decl)
+parseDecls src =
+    run
+        (succeed identity
+            |. sps
+            |= loop []
+                (\revDecls ->
+                    oneOf
+                        [ succeed (\s -> Loop <| s :: revDecls)
+                            |= decl
+                            |. sps
+                        , succeed ()
+                            |> map (\_ -> Done <| List.reverse revDecls)
+                        ]
+                )
+            |. end ExpectingEOF
+        )
+        src
+
+
+parseDecl : String -> Result (List (DeadEnd Context Problem)) Decl
+parseDecl src =
+    run
+        (succeed identity
+            |= decl
+            |. end ExpectingEOF
+        )
+        src
+
+
+decl : AntParser Decl
+decl =
+    oneOf
+        [ structDecl ]
+
+
+structDecl : AntParser Decl
+structDecl =
+    succeed
+        (\name fields ->
+            StructDecl
+                { name = name
+                , fields =
+                    Dict.fromList <|
+                        List.map
+                            (\( key, value ) ->
+                                ( key.value, ( key, value ) )
+                            )
+                            fields
+                }
+        )
+        |. keyword (Token "struct" <| ExpectingKeyword "struct")
+        |. sps
+        |= tyName ExpectingStructName
+        |. sps
+        |= sequence
+            { start = Token "{" ExpectingStartOfStruct
+            , separator = Token "," <| ExpectingSymbol ","
+            , end = Token "}" ExpectingEndOfStruct
+            , spaces = sps
+            , item =
+                succeed Tuple.pair
+                    |= varName ExpectingStructField
+                    |. sps
+                    |. symbol (Token ":" <| ExpectingSymbol ":")
+                    |. sps
+                    |= parseType
+            , trailing = Optional
+            }
+
+
+parseType : AntParser (Located Type)
+parseType =
+    located <|
+        oneOf
+            [ map (\_ -> IntType) <| keyword (Token "Int" <| ExpectingType)
+            , map (\_ -> CharType) <| keyword (Token "Char" <| ExpectingType)
+            , map (\_ -> StringType) <| keyword (Token "String" <| ExpectingType)
+            , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
+            , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
+            ]
 
 
 parseStmts : String -> Result (List (DeadEnd Context Problem)) (List Stmt)
@@ -421,17 +514,17 @@ literalExpr =
                     ]
                 , map IntLiteral integer
                 , succeed
-                    (\name mappings ->
+                    (\name fields ->
                         StructLiteral
                             { name =
                                 name
-                            , mappings =
+                            , fields =
                                 Dict.fromList <|
                                     List.map
                                         (\( key, value ) ->
                                             ( key.value, ( key, value ) )
                                         )
-                                        mappings
+                                        fields
                             }
                     )
                     |= tyName ExpectingStructName
@@ -866,6 +959,9 @@ showProblem p =
         ExpectingEOF ->
             "end of program"
 
+        ExpectingType ->
+            "a type"
+
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
 showProblemContextStack contexts =
@@ -943,6 +1039,23 @@ type CleanStmt
         , arguments : List CleanExpr
         }
     | CReturnStmt CleanExpr
+
+
+type CleanDecl
+    = CStructDecl
+        { name : String
+        , fields : Dict String Type
+        }
+    | CFunctionDecl
+        { name : String
+        , parameters : List ( String, Type )
+        , returnType : Type
+        , body : CleanBlock
+        }
+    | CImplDecl
+        { target : String
+        , subroutines : List CleanDecl
+        }
 
 
 type alias CleanBlock =
@@ -1064,3 +1177,40 @@ cleanBlock b =
     ( cleanStmts <| Tuple.first b.value
     , Maybe.map cleanExpr <| Tuple.second b.value
     )
+
+
+cleanDecl : Decl -> CleanDecl
+cleanDecl d =
+    case d of
+        StructDecl { name, fields } ->
+            CStructDecl
+                { name = name.value
+                , fields =
+                    Dict.foldl
+                        (\_ ( fieldName, fieldType ) cleanDict ->
+                            Dict.insert fieldName.value fieldType.value cleanDict
+                        )
+                        Dict.empty
+                        fields
+                }
+
+        FunctionDecl { name, parameters, returnType, body } ->
+            CFunctionDecl
+                { name = name.value
+                , parameters =
+                    List.map
+                        (\( paramName, paramType ) ->
+                            ( paramName.value, paramType.value )
+                        )
+                        parameters
+                , returnType = returnType.value
+                , body =
+                    cleanBlock body
+                }
+
+        ImplDecl { target, subroutines } ->
+            CImplDecl
+                { target = target.value
+                , subroutines =
+                    List.map cleanDecl subroutines
+                }
