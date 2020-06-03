@@ -52,12 +52,24 @@ testExpr =
                 Ok <|
                     LiteralExpr <|
                         { from = ( 1, 1 ), to = ( 1, 19 ), value = StringLiteral "it's a nice day!" }
-            , testWithLocation "Int"
+            , testWithLocation "Positive Int"
                 "38391900"
               <|
                 Ok <|
                     LiteralExpr <|
                         { from = ( 1, 1 ), to = ( 1, 9 ), value = IntLiteral 38391900 }
+            , testWithLocation "Zero"
+                "0"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 2 ), value = IntLiteral 0 }
+            , testWithLocation "Negative Int"
+                "-38391900"
+              <|
+                Ok <|
+                    LiteralExpr <|
+                        { from = ( 1, 1 ), to = ( 1, 10 ), value = IntLiteral -38391900 }
             , testWithLocation "Bool : true"
                 "true"
               <|
@@ -121,6 +133,21 @@ testExpr =
                                 }
                         , op = SubtractOp
                         , right = CLiteralExpr (IntLiteral 4)
+                        }
+                    )
+            , test "mixed add and subtract on positive and negative ints"
+                "2 + -3 - -4"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral 2)
+                                , op = AddOp
+                                , right = CLiteralExpr (IntLiteral -3)
+                                }
+                        , op = SubtractOp
+                        , right = CLiteralExpr (IntLiteral -4)
                         }
                     )
             , test "multiply"
@@ -192,6 +219,33 @@ testExpr =
                                 { left = CLiteralExpr (IntLiteral 4)
                                 , op = DivideOp
                                 , right = CLiteralExpr (IntLiteral 5)
+                                }
+                        }
+                    )
+            , test "mixed add, subtract, multiply, and divide on positive and negative ints"
+                "-1 + 2 * -3 - -4 / -5"
+              <|
+                Ok
+                    (CArithmeticExpr
+                        { left =
+                            CArithmeticExpr
+                                { left =
+                                    CLiteralExpr (IntLiteral -1)
+                                , op = AddOp
+                                , right =
+                                    CArithmeticExpr
+                                        { left = CLiteralExpr (IntLiteral 2)
+                                        , op = MultiplyOp
+                                        , right = CLiteralExpr (IntLiteral -3)
+                                        }
+                                }
+                        , op =
+                            SubtractOp
+                        , right =
+                            CArithmeticExpr
+                                { left = CLiteralExpr (IntLiteral -4)
+                                , op = DivideOp
+                                , right = CLiteralExpr (IntLiteral -5)
                                 }
                         }
                     )

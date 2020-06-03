@@ -1,10 +1,10 @@
 module AntParser exposing
     ( Accessor(..)
     , ArithmeticOp(..)
+    , BooleanOp(..)
     , CleanExpr(..)
     , CleanStmt(..)
     , ComparisonOp(..)
-    , BooleanOp(..)
     , Context(..)
     , Decl(..)
     , Expr(..)
@@ -274,7 +274,7 @@ expr =
                 (backtrackable <| symbol <| Token "|" <| ExpectingSymbol "|")
               <|
                 formArithmeticExpr BitwiseOrOp
-            
+
             {- comparison operators -}
             , Pratt.infixLeft 7
                 (symbol <| Token "==" <| ExpectingSymbol "==")
@@ -300,7 +300,7 @@ expr =
                 (symbol <| Token "<" <| ExpectingSymbol "<")
               <|
                 formComparisonExpr LessThanOp
-            
+
             {- boolean operators -}
             , Pratt.infixLeft 6
                 (symbol <| Token "&&" <| ExpectingSymbol "&&")
@@ -419,7 +419,7 @@ literalExpr =
                     [ map (\_ -> BoolLiteral True) <| keyword (Token "true" <| ExpectingKeyword "true")
                     , map (\_ -> BoolLiteral False) <| keyword (Token "false" <| ExpectingKeyword "true")
                     ]
-                , map IntLiteral <| int ExpectingInt InvalidNumber
+                , map IntLiteral integer
                 , succeed
                     (\name mappings ->
                         StructLiteral
@@ -451,6 +451,23 @@ literalExpr =
                         , trailing = Optional
                         }
                 ]
+
+
+integer : AntParser Int
+integer =
+    succeed
+        (\sign value ->
+            case sign of
+                Just _ ->
+                    negate value
+
+                Nothing ->
+                    value
+        )
+        |= optional (symbol <| Token "-" <| ExpectingSymbol "-")
+        |= (backtrackable <|
+                int ExpectingInt ExpectingInt
+           )
 
 
 pattern : AntParser Pattern
