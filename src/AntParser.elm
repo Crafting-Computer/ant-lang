@@ -1,20 +1,26 @@
 module AntParser exposing
     ( Accessor(..)
     , ArithmeticOp(..)
+    , Block
     , BooleanOp(..)
+    , CleanAccessor(..)
     , CleanDecl(..)
     , CleanExpr(..)
+    , CleanPath
+    , CleanPathSegment(..)
+    , CleanPlace
     , CleanStmt(..)
     , ComparisonOp(..)
     , Context(..)
     , Decl(..)
-    , FunctionDecl
     , Expr(..)
+    , FunctionDecl
     , Literal(..)
     , Pattern(..)
     , Problem(..)
     , Stmt(..)
     , Type(..)
+    , Variable
     , cleanDecl
     , cleanExpr
     , cleanExprs
@@ -29,7 +35,7 @@ module AntParser exposing
 
 import Dict exposing (Dict)
 import List.Extra
-import Location exposing (Located, showProblemLocation)
+import Location exposing (Located, dummyLocated, showProblemLocation)
 import Parser.Advanced exposing (..)
 import Pratt.Advanced as Pratt
 import Set exposing (Set)
@@ -66,10 +72,11 @@ type Expr
         , arguments : List (Located Expr)
         }
     | PlaceExpr
-        { name : Located String
-        , accessors : List Accessor
+        { target : Located Expr
+        , accessor : Accessor
         }
-    | BlockExpr (Located Block)
+    | BlockExpr Block
+    | PathExpr Path
 
 
 type Stmt
@@ -78,13 +85,10 @@ type Stmt
         , value : Located Expr
         }
     | LetStmt
-        { target : Located Expr
+        { target : Located Place
         , value : Located Expr
         }
-    | CallStmt
-        { caller : Located Expr
-        , arguments : List (Located Expr)
-        }
+    | CallStmt (Located Expr)
     | ReturnStmt (Located Expr)
 
 
@@ -96,15 +100,22 @@ type Decl
     | FnDecl FunctionDecl
     | ImplDecl
         { target : Located String
-        , subroutines : List FunctionDecl
+        , functions : List FunctionDecl
         }
 
 
 type alias FunctionDecl =
     { name : Located String
+    , namespace : Maybe (Located String)
     , parameters : List ( Located Pattern, Located Type )
     , returnType : Located Type
     , body : Located Block
+    }
+
+
+type alias Place =
+    { name : Located String
+    , accessors : List Accessor
     }
 
 
@@ -115,14 +126,21 @@ type Type
     | StringType
     | UnitType
     | NamedType (Located String)
+    | StructType
+        { name : Located String
+        , fields : Dict String ( Located String, Located Type )
+        }
 
 
 type Pattern
-    = IdentifierPattern
-        { mutable : Bool
-        , name : Located String
-        }
+    = IdentifierPattern Variable
     | WildcardPattern
+
+
+type alias Variable =
+    { mutable : Bool
+    , name : Located String
+    }
 
 
 type Literal
@@ -162,6 +180,14 @@ type BooleanOp
 type Accessor
     = ArrayAccess (Located Expr)
     | StructAccess (Located String)
+
+
+type alias Path =
+    ( PathSegment, List PathSegment )
+
+
+type PathSegment
+    = IdentifierSegment (Located String)
 
 
 type alias Block =
@@ -206,6 +232,7 @@ type Problem
     | ExpectingEOF
     | ExpectingType
     | ExpectingFunctionName
+    | ExpectingPathSegment
 
 
 reserved : Set String
@@ -296,14 +323,15 @@ structDecl =
 
 fnDecl : AntParser Decl
 fnDecl =
-    map FnDecl functionDecl
+    map FnDecl <| functionDecl Nothing
 
 
-functionDecl : AntParser FunctionDecl
-functionDecl =
+functionDecl : Maybe (Located String) -> AntParser FunctionDecl
+functionDecl namespace =
     succeed
         (\name parameters returnType body ->
             { name = name
+            , namespace = namespace
             , parameters = parameters
             , returnType = returnType
             , body = body
@@ -337,25 +365,29 @@ functionDecl =
 
 implDecl : AntParser Decl
 implDecl =
-    succeed
-    (\target subroutines ->
-        ImplDecl
-            { target = target
-            , subroutines = subroutines
-            }
-    )
-    |. keyword (Token "impl" <| ExpectingKeyword "impl")
-    |. sps
-    |= tyName ExpectingStructName
-    |. sps
-    |= sequence
-        { start = Token "{" <| ExpectingSymbol "{"
-        , separator = Token "" <| ExpectingSymbol ""
-        , end = Token "}" <| ExpectingSymbol "}"
-        , spaces = sps
-        , item = functionDecl
-        , trailing = Optional
-        }
+    succeed identity
+        |. keyword (Token "impl" <| ExpectingKeyword "impl")
+        |. sps
+        |= tyName ExpectingStructName
+        |. sps
+        |> andThen
+            (\target ->
+                succeed
+                    (\functions ->
+                        ImplDecl
+                            { target = target
+                            , functions = functions
+                            }
+                    )
+                    |= sequence
+                        { start = Token "{" <| ExpectingSymbol "{"
+                        , separator = Token "" <| ExpectingSymbol ""
+                        , end = Token "}" <| ExpectingSymbol "}"
+                        , spaces = sps
+                        , item = functionDecl (Just target)
+                        , trailing = Optional
+                        }
+            )
 
 
 ty : AntParser Type
@@ -402,18 +434,9 @@ parseExpr src =
 
 expr : AntParser (Located Expr)
 expr =
-    let
-        subexpr =
-            Pratt.literal << located
-    in
     Pratt.expression
         { oneOf =
-            List.map subexpr
-                [ ifExpr
-                , whileExpr
-                , literalExpr
-                , placeOrCallExpr
-                ]
+            [ Pratt.literal subExpr ]
         , andThenOneOf =
             {- arithmetic operators -}
             [ Pratt.infixLeft 13
@@ -481,6 +504,37 @@ expr =
         }
 
 
+subExpr : AntParser (Located Expr)
+subExpr =
+    succeed identity
+        |= (located <|
+                oneOf
+                    [ ifExpr
+                    , whileExpr
+                    , literalExpr
+                    , pathExpr
+                    ]
+           )
+        |. sps
+        |> andThen
+            (\e1 ->
+                loop e1
+                    (\e2 ->
+                        oneOf
+                            [ map Loop <|
+                                located <|
+                                    oneOf
+                                        [ map (\arguments -> CallExpr { caller = e2, arguments = arguments }) exprList
+                                        , map (\accessor -> PlaceExpr { target = e2, accessor = accessor }) parseArrayAccess
+                                        , map (\accessor -> PlaceExpr { target = e2, accessor = accessor }) parseStructAccess
+                                        ]
+                            , succeed ()
+                                |> map (\_ -> Done e2)
+                            ]
+                    )
+            )
+
+
 formBooleanExpr : BooleanOp -> Located Expr -> Located Expr -> Located Expr
 formBooleanExpr =
     formBinaryExpr BooleanExpr
@@ -516,6 +570,37 @@ formBinaryExpr f op left right =
     }
 
 
+pathExpr : AntParser Expr
+pathExpr =
+    map PathExpr <|
+        succeed Tuple.pair
+            |= pathSegment
+            |= loop []
+                (\revSegments ->
+                    oneOf
+                        [ succeed (\segment -> Loop <| segment :: revSegments)
+                            |. symbol (Token "::" <| ExpectingSymbol "::")
+                            |= pathSegment
+                        , succeed ()
+                            |> map (\_ -> Done <| List.reverse revSegments)
+                        ]
+                )
+
+
+pathSegment : AntParser PathSegment
+pathSegment =
+    oneOf
+        [ map IdentifierSegment <|
+            located <|
+                variable
+                    { start = Char.isAlpha
+                    , inner = Char.isAlphaNum
+                    , reserved = reserved
+                    , expecting = ExpectingPathSegment
+                    }
+        ]
+
+
 ifExpr : AntParser Expr
 ifExpr =
     succeed
@@ -537,7 +622,7 @@ ifExpr =
         |= (located <|
                 oneOf
                     [ lazy (\_ -> ifExpr)
-                    , map BlockExpr <| located block
+                    , map BlockExpr block
                     ]
            )
 
@@ -656,51 +741,43 @@ pattern =
         ]
 
 
-placeOrCallExpr : AntParser Expr
-placeOrCallExpr =
-    succeed
-        (\place arguments ->
-            case arguments of
-                Nothing ->
-                    place.value
+place : AntParser Place
+place =
+    succeed (\name accessors -> { name = name, accessors = accessors })
+        |= varName ExpectingVariableName
+        |= parseAccessors
 
-                Just args ->
-                    CallExpr
-                        { caller = place
-                        , arguments = args
-                        }
+
+parseAccessors : AntParser (List Accessor)
+parseAccessors =
+    loop []
+        (\revAccessors ->
+            oneOf
+                [ succeed (\accessor -> Loop <| accessor :: revAccessors)
+                    |= parseArrayAccess
+                , succeed (\accessor -> Loop <| accessor :: revAccessors)
+                    |= parseStructAccess
+                , succeed ()
+                    |> map (\_ -> Done <| List.reverse revAccessors)
+                ]
         )
-        |= located placeExpr
-        |= (optional <|
-                succeed identity
-                    |. sps
-                    |= exprList
-           )
 
 
-placeExpr : AntParser Expr
-placeExpr =
-    succeed (\name accessors -> PlaceExpr { name = name, accessors = accessors })
-        |= oneOf
-            [ varName ExpectingVariableName
-            , tyName ExpectingStructName
-            ]
-        |= loop []
-            (\revAccessors ->
-                oneOf
-                    [ succeed (\accessor -> Loop <| ArrayAccess accessor :: revAccessors)
-                        |. symbol (Token "[" <| ExpectingStartOfArrayAccess)
-                        |. sps
-                        |= lazy (\_ -> expr)
-                        |. sps
-                        |. symbol (Token "]" <| ExpectingEndOfArrayAccess)
-                    , succeed (\accessor -> Loop <| StructAccess accessor :: revAccessors)
-                        |. symbol (Token "." <| ExpectingStartOfStructAccess)
-                        |= varName ExpectingStructField
-                    , succeed ()
-                        |> map (\_ -> Done <| List.reverse revAccessors)
-                    ]
-            )
+parseArrayAccess : AntParser Accessor
+parseArrayAccess =
+    succeed ArrayAccess
+        |. symbol (Token "[" <| ExpectingStartOfArrayAccess)
+        |. sps
+        |= lazy (\_ -> expr)
+        |. sps
+        |. symbol (Token "]" <| ExpectingEndOfArrayAccess)
+
+
+parseStructAccess : AntParser Accessor
+parseStructAccess =
+    succeed StructAccess
+        |. symbol (Token "." <| ExpectingStartOfStructAccess)
+        |= varName ExpectingStructField
 
 
 stmt : AntParser Stmt
@@ -749,7 +826,7 @@ letStmt =
                             , value = value
                             }
                     )
-                    |= located placeExpr
+                    |= located place
                     |. sps
                     |. symbol (Token "=" <| ExpectingSymbol "=")
                     |. sps
@@ -766,15 +843,10 @@ callStmt =
         |. sps
         |= (inContext CallContext <|
                 succeed
-                    (\caller arguments ->
-                        CallStmt
-                            { caller = caller
-                            , arguments = arguments
-                            }
+                    (\e ->
+                        CallStmt e
                     )
-                    |= located placeExpr
-                    |. sps
-                    |= exprList
+                    |= expr
                     |. sps
                     |. symbol (Token ";" <| ExpectingSymbol ";")
            )
@@ -1038,6 +1110,9 @@ showProblem p =
         ExpectingFunctionName ->
             "a function name"
 
+        ExpectingPathSegment ->
+            "a path segment"
+
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
 showProblemContextStack contexts =
@@ -1091,14 +1166,15 @@ type CleanExpr
         , arguments : List CleanExpr
         }
     | CPlaceExpr
-        { name : String
-        , accessors : List Accessor
+        { target : CleanExpr
+        , accessor : CleanAccessor
         }
     | CArrayIndexExpr
         { array : CleanExpr
         , index : CleanExpr
         }
     | CBlockExpr CleanBlock
+    | CPathExpr CleanPath
 
 
 type CleanStmt
@@ -1107,13 +1183,10 @@ type CleanStmt
         , value : CleanExpr
         }
     | CLetStmt
-        { target : CleanExpr
+        { target : CleanPlace
         , value : CleanExpr
         }
-    | CCallStmt
-        { caller : CleanExpr
-        , arguments : List CleanExpr
-        }
+    | CCallStmt CleanExpr
     | CReturnStmt CleanExpr
 
 
@@ -1125,7 +1198,7 @@ type CleanDecl
     | CFnDecl CFunctionDecl
     | CImplDecl
         { target : String
-        , subroutines : List CFunctionDecl
+        , functions : List CFunctionDecl
         }
 
 
@@ -1139,6 +1212,25 @@ type alias CFunctionDecl =
 
 type alias CleanBlock =
     ( List CleanStmt, Maybe CleanExpr )
+
+
+type alias CleanPlace =
+    { name : String
+    , accessors : List CleanAccessor
+    }
+
+
+type CleanAccessor
+    = CArrayAccess CleanExpr
+    | CStructAccess String
+
+
+type alias CleanPath =
+    ( CleanPathSegment, List CleanPathSegment )
+
+
+type CleanPathSegment
+    = CIdentifierSegment String
 
 
 cleanExpr : Located Expr -> CleanExpr
@@ -1203,22 +1295,55 @@ cleanExpr e =
                     cleanExprs arguments
                 }
 
-        PlaceExpr { name, accessors } ->
+        PlaceExpr { target, accessor } ->
             CPlaceExpr
-                { name =
-                    name.value
-                , accessors =
-                    accessors
+                { target =
+                    cleanExpr target
+                , accessor =
+                    cleanAccessor accessor
                 }
 
         BlockExpr b ->
             CBlockExpr <|
-                cleanBlock b
+                cleanBlock <|
+                    dummyLocated b
+
+        PathExpr ( firstSegment, restSegments ) ->
+            CPathExpr
+                ( cleanPathSegment firstSegment
+                , List.map cleanPathSegment restSegments
+                )
+
+
+cleanPathSegment : PathSegment -> CleanPathSegment
+cleanPathSegment s =
+    case s of
+        IdentifierSegment name ->
+            CIdentifierSegment name.value
 
 
 cleanExprs : List (Located Expr) -> List CleanExpr
 cleanExprs es =
     List.map cleanExpr es
+
+
+cleanPlace : Place -> CleanPlace
+cleanPlace { name, accessors } =
+    { name =
+        name.value
+    , accessors =
+        List.map cleanAccessor accessors
+    }
+
+
+cleanAccessor : Accessor -> CleanAccessor
+cleanAccessor a =
+    case a of
+        ArrayAccess e ->
+            CArrayAccess <| cleanExpr e
+
+        StructAccess n ->
+            CStructAccess n.value
 
 
 cleanStmt : Stmt -> CleanStmt
@@ -1232,15 +1357,12 @@ cleanStmt s =
 
         LetStmt { target, value } ->
             CLetStmt
-                { target = cleanExpr target
+                { target = cleanPlace target.value
                 , value = cleanExpr value
                 }
 
-        CallStmt { caller, arguments } ->
-            CCallStmt
-                { caller = cleanExpr caller
-                , arguments = cleanExprs arguments
-                }
+        CallStmt e ->
+            CCallStmt <| cleanExpr e
 
         ReturnStmt e ->
             CReturnStmt <| cleanExpr e
@@ -1276,11 +1398,11 @@ cleanDecl d =
         FnDecl f ->
             CFnDecl <| cleanFunctionDecl f
 
-        ImplDecl { target, subroutines } ->
+        ImplDecl { target, functions } ->
             CImplDecl
                 { target = target.value
-                , subroutines =
-                    List.map cleanFunctionDecl subroutines
+                , functions =
+                    List.map cleanFunctionDecl functions
                 }
 
 

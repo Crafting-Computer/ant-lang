@@ -5,8 +5,10 @@ import AntParser
         ( Accessor(..)
         , ArithmeticOp(..)
         , BooleanOp(..)
+        , CleanAccessor(..)
         , CleanDecl(..)
         , CleanExpr(..)
+        , CleanPathSegment(..)
         , CleanStmt(..)
         , ComparisonOp(..)
         , Context
@@ -102,6 +104,16 @@ testExpr =
 }"""
               <|
                 Ok (LiteralExpr { from = ( 1, 1 ), to = ( 3, 2 ), value = StructLiteral { fields = Dict.fromList [ ( "key1", ( { from = ( 2, 3 ), to = ( 2, 7 ), value = "key1" }, { from = ( 2, 10 ), to = ( 2, 18 ), value = LiteralExpr { from = ( 2, 10 ), to = ( 2, 18 ), value = StringLiteral "value1" } } ) ) ], name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" } } })
+            ]
+        , describe "pathExpr"
+            [ test "single variable"
+                "a"
+              <|
+                Ok (CPathExpr ( CIdentifierSegment "a", [] ))
+            , test "simple path"
+                "a::b::c"
+              <|
+                Ok (CPathExpr ( CIdentifierSegment "a", [ CIdentifierSegment "b", CIdentifierSegment "c" ] ))
             ]
         , describe "ArithmeticExpr"
             [ test "add"
@@ -463,7 +475,7 @@ testExpr =
                         , thenBody =
                             { from = ( 1, 9 ), to = ( 3, 2 ), value = ( [], Just { from = ( 2, 3 ), to = ( 2, 4 ), value = LiteralExpr { from = ( 2, 3 ), to = ( 2, 4 ), value = IntLiteral 1 } } ) }
                         , elseBody =
-                            { from = ( 3, 8 ), to = ( 5, 2 ), value = BlockExpr { from = ( 3, 8 ), to = ( 5, 2 ), value = ( [], Just <| { from = ( 4, 3 ), to = ( 4, 4 ), value = LiteralExpr { from = ( 4, 3 ), to = ( 4, 4 ), value = IntLiteral 0 } } ) } }
+                            { from = ( 3, 8 ), to = ( 5, 2 ), value = BlockExpr ( [], Just <| { from = ( 4, 3 ), to = ( 4, 4 ), value = LiteralExpr { from = ( 4, 3 ), to = ( 4, 4 ), value = IntLiteral 0 } } ) }
                         }
                     )
             , test "if + 1 else if + else"
@@ -552,8 +564,7 @@ testExpr =
                                     , value = CLiteralExpr (IntLiteral 0)
                                     }
                               , CLetStmt
-                                    { target =
-                                        CPlaceExpr { accessors = [], name = "a" }
+                                    { target = { accessors = [], name = "a" }
                                     , value = CLiteralExpr (IntLiteral 1)
                                     }
                               ]
@@ -579,18 +590,12 @@ testExpr =
                                     , value = CLiteralExpr (IntLiteral 0)
                                     }
                               , CLetStmt
-                                    { target =
-                                        CPlaceExpr { accessors = [], name = "a" }
+                                    { target = { accessors = [], name = "a" }
                                     , value = CLiteralExpr (IntLiteral 1)
                                     }
                               ]
                             , Just <|
-                                CPlaceExpr
-                                    { name =
-                                        "a"
-                                    , accessors =
-                                        []
-                                    }
+                                CPathExpr ( CIdentifierSegment "a", [] )
                             )
                         , condition = CLiteralExpr (BoolLiteral True)
                         }
@@ -616,14 +621,9 @@ testExpr =
               <|
                 Ok
                     (CPlaceExpr
-                        { name = "a"
-                        , accessors =
-                            [ ArrayAccess
-                                { from = ( 1, 3 )
-                                , to = ( 1, 4 )
-                                , value = LiteralExpr { from = ( 1, 3 ), to = ( 1, 4 ), value = IntLiteral 0 }
-                                }
-                            ]
+                        { target = CPathExpr ( CIdentifierSegment "a", [] )
+                        , accessor =
+                            CArrayAccess <| CLiteralExpr (IntLiteral 0)
                         }
                     )
             , test "struct access"
@@ -631,9 +631,9 @@ testExpr =
               <|
                 Ok
                     (CPlaceExpr
-                        { accessors =
-                            [ StructAccess { from = ( 1, 3 ), to = ( 1, 12 ), value = "fieldName" } ]
-                        , name = "a"
+                        { accessor =
+                            CStructAccess "fieldName"
+                        , target = CPathExpr ( CIdentifierSegment "a", [] )
                         }
                     )
             , test "string of struct accesses"
@@ -641,11 +641,14 @@ testExpr =
               <|
                 Ok
                     (CPlaceExpr
-                        { accessors =
-                            [ StructAccess { from = ( 1, 3 ), to = ( 1, 13 ), value = "fieldName1" }
-                            , StructAccess { from = ( 1, 14 ), to = ( 1, 24 ), value = "fieldName2" }
-                            ]
-                        , name = "a"
+                        { target =
+                            CPlaceExpr
+                                { accessor =
+                                    CStructAccess "fieldName1"
+                                , target = CPathExpr ( CIdentifierSegment "a", [] )
+                                }
+                        , accessor =
+                            CStructAccess "fieldName2"
                         }
                     )
             , test "mixed accesses"
@@ -653,42 +656,77 @@ testExpr =
               <|
                 Ok
                     (CPlaceExpr
-                        { accessors =
-                            [ ArrayAccess
-                                { from = ( 1, 3 )
-                                , to = ( 1, 4 )
-                                , value = LiteralExpr { from = ( 1, 3 ), to = ( 1, 4 ), value = IntLiteral 0 }
+                        { accessor = CArrayAccess (CLiteralExpr (IntLiteral 2))
+                        , target =
+                            CPlaceExpr
+                                { accessor = CArrayAccess (CLiteralExpr (IntLiteral 1))
+                                , target =
+                                    CPlaceExpr
+                                        { accessor = CStructAccess "fieldName2"
+                                        , target =
+                                            CPlaceExpr
+                                                { accessor = CStructAccess "fieldName1"
+                                                , target =
+                                                    CPlaceExpr
+                                                        { accessor = CArrayAccess (CLiteralExpr (IntLiteral 0))
+                                                        , target = CPathExpr ( CIdentifierSegment "a", [] )
+                                                        }
+                                                }
+                                        }
                                 }
-                            , StructAccess { from = ( 1, 6 ), to = ( 1, 16 ), value = "fieldName1" }
-                            , StructAccess { from = ( 1, 17 ), to = ( 1, 27 ), value = "fieldName2" }
-                            , ArrayAccess
-                                { from = ( 1, 28 )
-                                , to = ( 1, 29 )
-                                , value =
-                                    LiteralExpr { from = ( 1, 28 ), to = ( 1, 29 ), value = IntLiteral 1 }
-                                }
-                            , ArrayAccess
-                                { from = ( 1, 31 )
-                                , to = ( 1, 32 )
-                                , value =
-                                    LiteralExpr { from = ( 1, 31 ), to = ( 1, 32 ), value = IntLiteral 2 }
-                                }
-                            ]
-                        , name = "a"
                         }
                     )
             , describe "CallExpr"
                 [ test "no argument"
                     "a()"
                   <|
-                    Ok (CCallExpr { arguments = [], caller = CPlaceExpr { accessors = [], name = "a" } })
+                    Ok (CCallExpr { arguments = [], caller = CPathExpr ( CIdentifierSegment "a", [] ) })
+                , test "no argument with more complex path as caller"
+                    "a::b::c()"
+                  <|
+                    Ok
+                        (CCallExpr
+                            { arguments = []
+                            , caller = CPathExpr ( CIdentifierSegment "a", [ CIdentifierSegment "b", CIdentifierSegment "c" ] )
+                            }
+                        )
+                , test "no argument with struct literal as caller"
+                    "MyStruct { a = 0 }()"
+                  <|
+                    Ok
+                        (CCallExpr
+                            { arguments = []
+                            , caller =
+                                CLiteralExpr
+                                    (StructLiteral
+                                        { fields =
+                                            Dict.fromList
+                                                [ ( "a"
+                                                  , ( { from = ( 1, 12 ), to = ( 1, 13 ), value = "a" }
+                                                    , { from = ( 1, 16 )
+                                                      , to = ( 1, 17 )
+                                                      , value =
+                                                            LiteralExpr
+                                                                { from = ( 1, 16 )
+                                                                , to = ( 1, 17 )
+                                                                , value = IntLiteral 0
+                                                                }
+                                                      }
+                                                    )
+                                                  )
+                                                ]
+                                        , name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" }
+                                        }
+                                    )
+                            }
+                        )
                 , test "1 argument"
                     "a(0)"
                   <|
                     Ok
                         (CCallExpr
                             { arguments = [ CLiteralExpr (IntLiteral 0) ]
-                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            , caller = CPathExpr ( CIdentifierSegment "a", [] )
                             }
                         )
                 , test "2 arguments"
@@ -700,7 +738,7 @@ testExpr =
                                 [ CLiteralExpr (IntLiteral 0)
                                 , CLiteralExpr (IntLiteral 1)
                                 ]
-                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            , caller = CPathExpr ( CIdentifierSegment "a", [] )
                             }
                         )
                 , test "more complicated arguments"
@@ -717,10 +755,10 @@ testExpr =
                                     }
                                 , CCallExpr
                                     { arguments = [ CLiteralExpr (IntLiteral 2), CLiteralExpr (IntLiteral 3) ]
-                                    , caller = CPlaceExpr { accessors = [], name = "b" }
+                                    , caller = CPathExpr ( CIdentifierSegment "b", [] )
                                     }
                                 ]
-                            , caller = CPlaceExpr { accessors = [], name = "a" }
+                            , caller = CPathExpr ( CIdentifierSegment "a", [] )
                             }
                         )
                 ]
@@ -781,13 +819,13 @@ testDecl =
                                             }
                                     , value =
                                         CArithmeticExpr
-                                            { left = CPlaceExpr { accessors = [], name = "a" }
+                                            { left = CPathExpr ( CIdentifierSegment "a", [] )
                                             , op = MultiplyOp
                                             , right = CLiteralExpr (IntLiteral 2)
                                             }
                                     }
                               ]
-                            , Just (CPlaceExpr { accessors = [], name = "b" })
+                            , Just (CPathExpr ( CIdentifierSegment "b", [] ))
                             )
                         , name = "myFunc"
                         , parameters =
@@ -818,13 +856,13 @@ testDecl =
               <|
                 Ok
                     (CImplDecl
-                        { subroutines =
+                        { functions =
                             [ { body =
                                     ( []
                                     , Just
                                         (CPlaceExpr
-                                            { accessors = [ StructAccess { from = ( 3, 14 ), to = ( 3, 15 ), value = "a" } ]
-                                            , name = "self"
+                                            { accessor = CStructAccess "a"
+                                            , target = CPathExpr ( CIdentifierSegment "self", [] )
                                             }
                                         )
                                     )
@@ -852,7 +890,7 @@ testDecl =
               <|
                 Ok
                     (CImplDecl
-                        { subroutines =
+                        { functions =
                             [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
                               , name = "bar"
                               , parameters = []
@@ -874,7 +912,7 @@ testDecl =
               <|
                 Ok
                     (CImplDecl
-                        { subroutines =
+                        { functions =
                             [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
                               , name = "bar"
                               , parameters = []
@@ -884,8 +922,8 @@ testDecl =
                                     ( []
                                     , Just
                                         (CPlaceExpr
-                                            { accessors = [ StructAccess { from = ( 6, 14 ), to = ( 6, 15 ), value = "a" } ]
-                                            , name = "self"
+                                            { accessor = CStructAccess "a"
+                                            , target = CPathExpr ( CIdentifierSegment "self", [] )
                                             }
                                         )
                                     )
