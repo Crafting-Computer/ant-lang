@@ -8,8 +8,11 @@ import AntParser
         , CleanAccessor(..)
         , CleanDecl(..)
         , CleanExpr(..)
+        , CleanLiteral(..)
         , CleanPathSegment(..)
+        , CleanPattern(..)
         , CleanStmt(..)
+        , CleanType(..)
         , ComparisonOp(..)
         , Context
         , Expr(..)
@@ -123,12 +126,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = AddOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = AddOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "subtract"
@@ -138,12 +141,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = SubtractOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = SubtractOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "mixed add and subtract"
@@ -153,12 +156,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = AddOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = SubtractOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "mixed add and subtract on positive and negative ints"
@@ -168,12 +171,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = AddOp
-                                , right = CLiteralExpr (IntLiteral -3)
+                                , right = CLiteralExpr (CIntLiteral -3)
                                 }
                         , op = SubtractOp
-                        , right = CLiteralExpr (IntLiteral -4)
+                        , right = CLiteralExpr (CIntLiteral -4)
                         }
                     )
             , test "multiply"
@@ -183,12 +186,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = MultiplyOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = MultiplyOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "divide"
@@ -198,12 +201,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = DivideOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = DivideOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "mixed multiply and divide"
@@ -213,12 +216,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = MultiplyOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         , op = DivideOp
-                        , right = CLiteralExpr (IntLiteral 4)
+                        , right = CLiteralExpr (CIntLiteral 4)
                         }
                     )
             , test "mixed add, subtract, multiply, and divide"
@@ -229,22 +232,22 @@ testExpr =
                         { left =
                             CArithmeticExpr
                                 { left =
-                                    CLiteralExpr (IntLiteral 1)
+                                    CLiteralExpr (CIntLiteral 1)
                                 , op = AddOp
                                 , right =
                                     CArithmeticExpr
-                                        { left = CLiteralExpr (IntLiteral 2)
+                                        { left = CLiteralExpr (CIntLiteral 2)
                                         , op = MultiplyOp
-                                        , right = CLiteralExpr (IntLiteral 3)
+                                        , right = CLiteralExpr (CIntLiteral 3)
                                         }
                                 }
                         , op =
                             SubtractOp
                         , right =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 4)
+                                { left = CLiteralExpr (CIntLiteral 4)
                                 , op = DivideOp
-                                , right = CLiteralExpr (IntLiteral 5)
+                                , right = CLiteralExpr (CIntLiteral 5)
                                 }
                         }
                     )
@@ -256,22 +259,22 @@ testExpr =
                         { left =
                             CArithmeticExpr
                                 { left =
-                                    CLiteralExpr (IntLiteral -1)
+                                    CLiteralExpr (CIntLiteral -1)
                                 , op = AddOp
                                 , right =
                                     CArithmeticExpr
-                                        { left = CLiteralExpr (IntLiteral 2)
+                                        { left = CLiteralExpr (CIntLiteral 2)
                                         , op = MultiplyOp
-                                        , right = CLiteralExpr (IntLiteral -3)
+                                        , right = CLiteralExpr (CIntLiteral -3)
                                         }
                                 }
                         , op =
                             SubtractOp
                         , right =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral -4)
+                                { left = CLiteralExpr (CIntLiteral -4)
                                 , op = DivideOp
-                                , right = CLiteralExpr (IntLiteral -5)
+                                , right = CLiteralExpr (CIntLiteral -5)
                                 }
                         }
                     )
@@ -282,12 +285,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 1)
+                                { left = CLiteralExpr (CIntLiteral 1)
                                 , op = BitwiseAndOp
-                                , right = CLiteralExpr (IntLiteral 2)
+                                , right = CLiteralExpr (CIntLiteral 2)
                                 }
                         , op = BitwiseAndOp
-                        , right = CLiteralExpr (IntLiteral 3)
+                        , right = CLiteralExpr (CIntLiteral 3)
                         }
                     )
             , test "Bitwise OR"
@@ -297,12 +300,12 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 1)
+                                { left = CLiteralExpr (CIntLiteral 1)
                                 , op = BitwiseOrOp
-                                , right = CLiteralExpr (IntLiteral 2)
+                                , right = CLiteralExpr (CIntLiteral 2)
                                 }
                         , op = BitwiseOrOp
-                        , right = CLiteralExpr (IntLiteral 3)
+                        , right = CLiteralExpr (CIntLiteral 3)
                         }
                     )
             , test "mixed Bitwise AND and OR"
@@ -310,13 +313,13 @@ testExpr =
               <|
                 Ok
                     (CArithmeticExpr
-                        { left = CLiteralExpr (IntLiteral 1)
+                        { left = CLiteralExpr (CIntLiteral 1)
                         , op = BitwiseOrOp
                         , right =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 2)
+                                { left = CLiteralExpr (CIntLiteral 2)
                                 , op = BitwiseAndOp
-                                , right = CLiteralExpr (IntLiteral 3)
+                                , right = CLiteralExpr (CIntLiteral 3)
                                 }
                         }
                     )
@@ -327,21 +330,21 @@ testExpr =
                     (CArithmeticExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 1)
+                                { left = CLiteralExpr (CIntLiteral 1)
                                 , op = BitwiseAndOp
                                 , right =
                                     CArithmeticExpr
-                                        { left = CLiteralExpr (IntLiteral 5)
+                                        { left = CLiteralExpr (CIntLiteral 5)
                                         , op = AddOp
-                                        , right = CLiteralExpr (IntLiteral 2)
+                                        , right = CLiteralExpr (CIntLiteral 2)
                                         }
                                 }
                         , op = BitwiseOrOp
                         , right =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 3)
+                                { left = CLiteralExpr (CIntLiteral 3)
                                 , op = DivideOp
-                                , right = CLiteralExpr (IntLiteral 4)
+                                , right = CLiteralExpr (CIntLiteral 4)
                                 }
                         }
                     )
@@ -352,9 +355,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = EqualOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "not equal"
@@ -362,9 +365,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = NotEqualOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "greater than or equal"
@@ -372,9 +375,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = GreaterThanOrEqualOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "less than or equal"
@@ -382,9 +385,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = LessThanOrEqualOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "greater than"
@@ -392,9 +395,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = GreaterThanOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "less than"
@@ -402,9 +405,9 @@ testExpr =
               <|
                 Ok
                     (CComparisonExpr
-                        { left = CLiteralExpr (IntLiteral 0)
+                        { left = CLiteralExpr (CIntLiteral 0)
                         , op = LessThanOp
-                        , right = CLiteralExpr (IntLiteral 1)
+                        , right = CLiteralExpr (CIntLiteral 1)
                         }
                     )
             , test "mixed arithmetic and comparison operations"
@@ -414,16 +417,16 @@ testExpr =
                     (CComparisonExpr
                         { left =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 1)
+                                { left = CLiteralExpr (CIntLiteral 1)
                                 , op = AddOp
-                                , right = CLiteralExpr (IntLiteral 2)
+                                , right = CLiteralExpr (CIntLiteral 2)
                                 }
                         , op = LessThanOp
                         , right =
                             CArithmeticExpr
-                                { left = CLiteralExpr (IntLiteral 3)
+                                { left = CLiteralExpr (CIntLiteral 3)
                                 , op = MultiplyOp
-                                , right = CLiteralExpr (IntLiteral 4)
+                                , right = CLiteralExpr (CIntLiteral 4)
                                 }
                         }
                     )
@@ -436,12 +439,12 @@ testExpr =
                     (CBooleanExpr
                         { left =
                             CBooleanExpr
-                                { left = CLiteralExpr (BoolLiteral True)
+                                { left = CLiteralExpr (CBoolLiteral True)
                                 , op = BooleanAndOp
-                                , right = CLiteralExpr (BoolLiteral False)
+                                , right = CLiteralExpr (CBoolLiteral False)
                                 }
                         , op = BooleanAndOp
-                        , right = CLiteralExpr (BoolLiteral False)
+                        , right = CLiteralExpr (CBoolLiteral False)
                         }
                     )
             , test "boolean OR"
@@ -451,12 +454,12 @@ testExpr =
                     (CBooleanExpr
                         { left =
                             CBooleanExpr
-                                { left = CLiteralExpr (BoolLiteral True)
+                                { left = CLiteralExpr (CBoolLiteral True)
                                 , op = BooleanOrOp
-                                , right = CLiteralExpr (BoolLiteral False)
+                                , right = CLiteralExpr (CBoolLiteral False)
                                 }
                         , op = BooleanOrOp
-                        , right = CLiteralExpr (BoolLiteral False)
+                        , right = CLiteralExpr (CBoolLiteral False)
                         }
                     )
             ]
@@ -490,15 +493,15 @@ testExpr =
                 Ok
                     (CIfExpr
                         { condition =
-                            CLiteralExpr (BoolLiteral True)
+                            CLiteralExpr (CBoolLiteral True)
                         , elseBody =
                             CIfExpr
                                 { condition =
-                                    CLiteralExpr (BoolLiteral False)
-                                , elseBody = CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
-                                , thenBody = ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                    CLiteralExpr (CBoolLiteral False)
+                                , elseBody = CBlockExpr ( [], Just (CLiteralExpr (CIntLiteral 0)) )
+                                , thenBody = ( [], Just (CLiteralExpr (CIntLiteral 1)) )
                                 }
-                        , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
+                        , thenBody = ( [], Just (CLiteralExpr (CIntLiteral 2)) )
                         }
                     )
             , test "if + 2 else if + else"
@@ -515,23 +518,23 @@ testExpr =
                 Ok
                     (CIfExpr
                         { condition =
-                            CLiteralExpr (BoolLiteral True)
+                            CLiteralExpr (CBoolLiteral True)
                         , elseBody =
                             CIfExpr
                                 { condition =
-                                    CLiteralExpr (BoolLiteral False)
+                                    CLiteralExpr (CBoolLiteral False)
                                 , elseBody =
                                     CIfExpr
                                         { condition =
-                                            CLiteralExpr (BoolLiteral True)
+                                            CLiteralExpr (CBoolLiteral True)
                                         , elseBody =
-                                            CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                            CBlockExpr ( [], Just (CLiteralExpr (CIntLiteral 0)) )
                                         , thenBody =
-                                            ( [], Just (CLiteralExpr (IntLiteral 1)) )
+                                            ( [], Just (CLiteralExpr (CIntLiteral 1)) )
                                         }
-                                , thenBody = ( [], Just (CLiteralExpr (IntLiteral 2)) )
+                                , thenBody = ( [], Just (CLiteralExpr (CIntLiteral 2)) )
                                 }
-                        , thenBody = ( [], Just (CLiteralExpr (IntLiteral 3)) )
+                        , thenBody = ( [], Just (CLiteralExpr (CIntLiteral 3)) )
                         }
                     )
             , test "expecting start of block"
@@ -559,18 +562,17 @@ testExpr =
                         { body =
                             ( [ CVarStmt
                                     { target =
-                                        IdentifierPattern
-                                            { mutable = False, name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "a" } }
-                                    , value = CLiteralExpr (IntLiteral 0)
+                                        CIdentifierPattern { mutable = False, name = "a" }
+                                    , value = CLiteralExpr (CIntLiteral 0)
                                     }
                               , CLetStmt
                                     { target = { accessors = [], name = "a" }
-                                    , value = CLiteralExpr (IntLiteral 1)
+                                    , value = CLiteralExpr (CIntLiteral 1)
                                     }
                               ]
                             , Nothing
                             )
-                        , condition = CLiteralExpr (BoolLiteral True)
+                        , condition = CLiteralExpr (CBoolLiteral True)
                         }
                     )
             , test "body containing several stmts ended with expr"
@@ -585,19 +587,18 @@ testExpr =
                         { body =
                             ( [ CVarStmt
                                     { target =
-                                        IdentifierPattern
-                                            { mutable = False, name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "a" } }
-                                    , value = CLiteralExpr (IntLiteral 0)
+                                        CIdentifierPattern { mutable = False, name = "a" }
+                                    , value = CLiteralExpr (CIntLiteral 0)
                                     }
                               , CLetStmt
                                     { target = { accessors = [], name = "a" }
-                                    , value = CLiteralExpr (IntLiteral 1)
+                                    , value = CLiteralExpr (CIntLiteral 1)
                                     }
                               ]
                             , Just <|
                                 CPathExpr ( CIdentifierSegment "a", [] )
                             )
-                        , condition = CLiteralExpr (BoolLiteral True)
+                        , condition = CLiteralExpr (CBoolLiteral True)
                         }
                     )
             , test "body containing single expr"
@@ -609,9 +610,9 @@ testExpr =
                     (CWhileExpr
                         { body =
                             ( []
-                            , Just (CLiteralExpr (IntLiteral 1))
+                            , Just (CLiteralExpr (CIntLiteral 1))
                             )
-                        , condition = CLiteralExpr (BoolLiteral True)
+                        , condition = CLiteralExpr (CBoolLiteral True)
                         }
                     )
             ]
@@ -623,7 +624,7 @@ testExpr =
                     (CPlaceExpr
                         { target = CPathExpr ( CIdentifierSegment "a", [] )
                         , accessor =
-                            CArrayAccess <| CLiteralExpr (IntLiteral 0)
+                            CArrayAccess <| CLiteralExpr (CIntLiteral 0)
                         }
                     )
             , test "struct access"
@@ -656,10 +657,10 @@ testExpr =
               <|
                 Ok
                     (CPlaceExpr
-                        { accessor = CArrayAccess (CLiteralExpr (IntLiteral 2))
+                        { accessor = CArrayAccess (CLiteralExpr (CIntLiteral 2))
                         , target =
                             CPlaceExpr
-                                { accessor = CArrayAccess (CLiteralExpr (IntLiteral 1))
+                                { accessor = CArrayAccess (CLiteralExpr (CIntLiteral 1))
                                 , target =
                                     CPlaceExpr
                                         { accessor = CStructAccess "fieldName2"
@@ -668,7 +669,7 @@ testExpr =
                                                 { accessor = CStructAccess "fieldName1"
                                                 , target =
                                                     CPlaceExpr
-                                                        { accessor = CArrayAccess (CLiteralExpr (IntLiteral 0))
+                                                        { accessor = CArrayAccess (CLiteralExpr (CIntLiteral 0))
                                                         , target = CPathExpr ( CIdentifierSegment "a", [] )
                                                         }
                                                 }
@@ -698,24 +699,14 @@ testExpr =
                             { arguments = []
                             , caller =
                                 CLiteralExpr
-                                    (StructLiteral
+                                    (CStructLiteral
                                         { fields =
                                             Dict.fromList
                                                 [ ( "a"
-                                                  , ( { from = ( 1, 12 ), to = ( 1, 13 ), value = "a" }
-                                                    , { from = ( 1, 16 )
-                                                      , to = ( 1, 17 )
-                                                      , value =
-                                                            LiteralExpr
-                                                                { from = ( 1, 16 )
-                                                                , to = ( 1, 17 )
-                                                                , value = IntLiteral 0
-                                                                }
-                                                      }
-                                                    )
+                                                  , CLiteralExpr (CIntLiteral 0)
                                                   )
                                                 ]
-                                        , name = { from = ( 1, 1 ), to = ( 1, 9 ), value = "MyStruct" }
+                                        , name = "MyStruct"
                                         }
                                     )
                             }
@@ -725,7 +716,7 @@ testExpr =
                   <|
                     Ok
                         (CCallExpr
-                            { arguments = [ CLiteralExpr (IntLiteral 0) ]
+                            { arguments = [ CLiteralExpr (CIntLiteral 0) ]
                             , caller = CPathExpr ( CIdentifierSegment "a", [] )
                             }
                         )
@@ -735,8 +726,8 @@ testExpr =
                     Ok
                         (CCallExpr
                             { arguments =
-                                [ CLiteralExpr (IntLiteral 0)
-                                , CLiteralExpr (IntLiteral 1)
+                                [ CLiteralExpr (CIntLiteral 0)
+                                , CLiteralExpr (CIntLiteral 1)
                                 ]
                             , caller = CPathExpr ( CIdentifierSegment "a", [] )
                             }
@@ -748,13 +739,13 @@ testExpr =
                         (CCallExpr
                             { arguments =
                                 [ CIfExpr
-                                    { condition = CLiteralExpr (BoolLiteral True)
+                                    { condition = CLiteralExpr (CBoolLiteral True)
                                     , elseBody =
-                                        CBlockExpr ( [], Just (CLiteralExpr (IntLiteral 1)) )
-                                    , thenBody = ( [], Just (CLiteralExpr (IntLiteral 0)) )
+                                        CBlockExpr ( [], Just (CLiteralExpr (CIntLiteral 1)) )
+                                    , thenBody = ( [], Just (CLiteralExpr (CIntLiteral 0)) )
                                     }
                                 , CCallExpr
-                                    { arguments = [ CLiteralExpr (IntLiteral 2), CLiteralExpr (IntLiteral 3) ]
+                                    { arguments = [ CLiteralExpr (CIntLiteral 2), CLiteralExpr (CIntLiteral 3) ]
                                     , caller = CPathExpr ( CIdentifierSegment "b", [] )
                                     }
                                 ]
@@ -785,7 +776,7 @@ testDecl =
               <|
                 Ok
                     (CStructDecl
-                        { fields = Dict.fromList [ ( "a", StringType ), ( "b", IntType ) ]
+                        { fields = Dict.fromList [ ( "a", CStringType ), ( "b", CIntType ) ]
                         , name = "MyStruct"
                         }
                     )
@@ -799,7 +790,7 @@ testDecl =
                         { body = ( [], Nothing )
                         , name = "myFunc"
                         , parameters = []
-                        , returnType = UnitType
+                        , returnType = CUnitType
                         }
                     )
             , test "2 arguments"
@@ -813,15 +804,12 @@ testDecl =
                         { body =
                             ( [ CVarStmt
                                     { target =
-                                        IdentifierPattern
-                                            { mutable = False
-                                            , name = { from = ( 2, 9 ), to = ( 2, 10 ), value = "c" }
-                                            }
+                                        CIdentifierPattern { mutable = False, name = "c" }
                                     , value =
                                         CArithmeticExpr
                                             { left = CPathExpr ( CIdentifierSegment "a", [] )
                                             , op = MultiplyOp
-                                            , right = CLiteralExpr (IntLiteral 2)
+                                            , right = CLiteralExpr (CIntLiteral 2)
                                             }
                                     }
                               ]
@@ -829,20 +817,14 @@ testDecl =
                             )
                         , name = "myFunc"
                         , parameters =
-                            [ ( IdentifierPattern
-                                    { mutable = False
-                                    , name = { from = ( 1, 11 ), to = ( 1, 12 ), value = "a" }
-                                    }
-                              , IntType
+                            [ ( CIdentifierPattern { mutable = False, name = "a" }
+                              , CIntType
                               )
-                            , ( IdentifierPattern
-                                    { mutable = False
-                                    , name = { from = ( 1, 20 ), to = ( 1, 21 ), value = "b" }
-                                    }
-                              , StringType
+                            , ( CIdentifierPattern { mutable = False, name = "b" }
+                              , CStringType
                               )
                             ]
-                        , returnType = StringType
+                        , returnType = CStringType
                         }
                     )
             ]
@@ -868,14 +850,11 @@ testDecl =
                                     )
                               , name = "getA"
                               , parameters =
-                                    [ ( IdentifierPattern
-                                            { mutable = False
-                                            , name = { from = ( 2, 13 ), to = ( 2, 17 ), value = "self" }
-                                            }
-                                      , NamedType { from = ( 2, 19 ), to = ( 2, 27 ), value = "MyStruct" }
+                                    [ ( CIdentifierPattern { mutable = False, name = "self" }
+                                      , CNamedType "MyStruct"
                                       )
                                     ]
-                              , returnType = IntType
+                              , returnType = CIntType
                               }
                             ]
                         , target = "MyStruct"
@@ -891,10 +870,10 @@ testDecl =
                 Ok
                     (CImplDecl
                         { functions =
-                            [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
+                            [ { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
                               , name = "bar"
                               , parameters = []
-                              , returnType = StringType
+                              , returnType = CStringType
                               }
                             ]
                         , target = "MyStruct"
@@ -913,10 +892,10 @@ testDecl =
                 Ok
                     (CImplDecl
                         { functions =
-                            [ { body = ( [], Just (CLiteralExpr (StringLiteral "MyStruct.bar() was called")) )
+                            [ { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
                               , name = "bar"
                               , parameters = []
-                              , returnType = StringType
+                              , returnType = CStringType
                               }
                             , { body =
                                     ( []
@@ -929,11 +908,11 @@ testDecl =
                                     )
                               , name = "getA"
                               , parameters =
-                                    [ ( IdentifierPattern { mutable = False, name = { from = ( 5, 13 ), to = ( 5, 17 ), value = "self" } }
-                                      , NamedType { from = ( 5, 19 ), to = ( 5, 27 ), value = "MyStruct" }
+                                    [ ( CIdentifierPattern { mutable = False, name = "self" }
+                                      , CNamedType "MyStruct"
                                       )
                                     ]
-                              , returnType = IntType
+                              , returnType = CIntType
                               }
                             ]
                         , target = "MyStruct"

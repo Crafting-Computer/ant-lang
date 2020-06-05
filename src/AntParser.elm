@@ -6,10 +6,13 @@ module AntParser exposing
     , CleanAccessor(..)
     , CleanDecl(..)
     , CleanExpr(..)
+    , CleanLiteral(..)
     , CleanPath
     , CleanPathSegment(..)
+    , CleanPattern(..)
     , CleanPlace
     , CleanStmt(..)
+    , CleanType(..)
     , ComparisonOp(..)
     , Context(..)
     , Decl(..)
@@ -1178,7 +1181,7 @@ type CleanExpr
         { condition : CleanExpr
         , body : CleanBlock
         }
-    | CLiteralExpr Literal
+    | CLiteralExpr CleanLiteral
     | CArithmeticExpr
         { left : CleanExpr
         , op : ArithmeticOp
@@ -1212,7 +1215,7 @@ type CleanExpr
 
 type CleanStmt
     = CVarStmt
-        { target : Pattern
+        { target : CleanPattern
         , value : CleanExpr
         }
     | CLetStmt
@@ -1226,7 +1229,7 @@ type CleanStmt
 type CleanDecl
     = CStructDecl
         { name : String
-        , fields : Dict String Type
+        , fields : Dict String CleanType
         }
     | CFnDecl CFunctionDecl
     | CImplDecl
@@ -1237,14 +1240,51 @@ type CleanDecl
 
 type alias CFunctionDecl =
     { name : String
-    , parameters : List ( Pattern, Type )
-    , returnType : Type
+    , parameters : List ( CleanPattern, CleanType )
+    , returnType : CleanType
     , body : CleanBlock
     }
 
 
 type alias CleanBlock =
     ( List CleanStmt, Maybe CleanExpr )
+
+
+type CleanPattern
+    = CIdentifierPattern CleanVariable
+    | CWildcardPattern
+
+
+type alias CleanVariable =
+    { mutable : Bool
+    , name : String
+    }
+
+
+type CleanLiteral
+    = CCharLiteral Char
+    | CStringLiteral String
+    | CIntLiteral Int
+    | CBoolLiteral Bool
+    | CStructLiteral
+        { name : String
+        , fields : Dict String CleanExpr
+        }
+
+
+type CleanType
+    = CIntType
+    | CBoolType
+    | CCharType
+    | CStringType
+    | CUnitType
+    | CNamedType String
+    | CStructType
+        { name : String
+        , fields : Dict String CleanType
+        }
+    | CFunctionType CFunctionDecl
+    | CArrayType
 
 
 type alias CleanPlace =
@@ -1288,7 +1328,7 @@ cleanExpr e =
                 }
 
         LiteralExpr literal ->
-            CLiteralExpr literal.value
+            CLiteralExpr <| cleanLiteral literal
 
         ArithmeticExpr { left, op, right } ->
             CArithmeticExpr
@@ -1348,6 +1388,91 @@ cleanExpr e =
                 )
 
 
+cleanPattern : Located Pattern -> CleanPattern
+cleanPattern p =
+    case p.value of
+        IdentifierPattern var ->
+            CIdentifierPattern <| cleanVariable var
+
+        WildcardPattern ->
+            CWildcardPattern
+
+
+cleanVariable : Variable -> CleanVariable
+cleanVariable { mutable, name } =
+    { mutable = mutable
+    , name = name.value
+    }
+
+
+cleanType : Located Type -> CleanType
+cleanType t =
+    case t.value of
+        IntType ->
+            CIntType
+
+        BoolType ->
+            CBoolType
+
+        CharType ->
+            CCharType
+
+        StringType ->
+            CStringType
+
+        UnitType ->
+            CUnitType
+
+        NamedType name ->
+            CNamedType name.value
+
+        StructType { name, fields } ->
+            CStructType
+                { name =
+                    name.value
+                , fields =
+                    Dict.map
+                        (\_ ( _, fieldType ) ->
+                            cleanType fieldType
+                        )
+                        fields
+                }
+
+        FunctionType f ->
+            CFunctionType <| cleanFunctionDecl f
+
+        ArrayType ->
+            CArrayType
+
+
+cleanLiteral : Located Literal -> CleanLiteral
+cleanLiteral l =
+    case l.value of
+        CharLiteral c ->
+            CCharLiteral c
+
+        StringLiteral s ->
+            CStringLiteral s
+
+        IntLiteral i ->
+            CIntLiteral i
+
+        BoolLiteral b ->
+            CBoolLiteral b
+
+        StructLiteral { name, fields } ->
+            CStructLiteral
+                { name =
+                    name.value
+                , fields =
+                    Dict.map
+                        (\_ ( _, fieldValue ) ->
+                            cleanExpr fieldValue
+                        )
+                        fields
+                }
+
+
 cleanPathSegment : Located PathSegment -> CleanPathSegment
 cleanPathSegment s =
     case s.value of
@@ -1384,7 +1509,7 @@ cleanStmt s =
     case s of
         VarStmt { target, value } ->
             CVarStmt
-                { target = target.value
+                { target = cleanPattern target
                 , value = cleanExpr value
                 }
 
@@ -1422,7 +1547,7 @@ cleanDecl d =
                 , fields =
                     Dict.foldl
                         (\_ ( fieldName, fieldType ) cleanDict ->
-                            Dict.insert fieldName.value fieldType.value cleanDict
+                            Dict.insert fieldName.value (cleanType fieldType) cleanDict
                         )
                         Dict.empty
                         fields
@@ -1445,10 +1570,10 @@ cleanFunctionDecl { name, parameters, returnType, body } =
     , parameters =
         List.map
             (\( paramName, paramType ) ->
-                ( paramName.value, paramType.value )
+                ( cleanPattern paramName, cleanType paramType )
             )
             parameters
-    , returnType = returnType.value
+    , returnType = cleanType returnType
     , body =
         cleanBlock body
     }
