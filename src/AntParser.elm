@@ -689,8 +689,8 @@ literalExpr =
                                         fields
                             }
                     )
-                    |= tyName ExpectingStructName
-                    |. sps
+                    |= (backtrackable <| tyName ExpectingStructName)
+                    |. backtrackable sps
                     |= sequence
                         { start = Token "{" ExpectingStartOfStruct
                         , separator = Token "," <| ExpectingSymbol ","
