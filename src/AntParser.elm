@@ -526,12 +526,41 @@ subExpr =
                     (\e2 ->
                         oneOf
                             [ map Loop <|
-                                located <|
-                                    oneOf
-                                        [ map (\arguments -> CallExpr { caller = e2, arguments = arguments }) exprList
-                                        , map (\accessor -> PlaceExpr { target = e2, accessor = accessor }) parseArrayAccess
-                                        , map (\accessor -> PlaceExpr { target = e2, accessor = accessor }) parseStructAccess
-                                        ]
+                                oneOf
+                                    [ map
+                                        (\arguments ->
+                                            { from =
+                                                e1.from
+                                            , to =
+                                                arguments.to
+                                            , value =
+                                                CallExpr { caller = e2, arguments = arguments.value }
+                                            }
+                                        )
+                                        (located exprList)
+                                    , map
+                                        (\accessor ->
+                                            { from =
+                                                e1.from
+                                            , to =
+                                                accessor.to
+                                            , value =
+                                                PlaceExpr { target = e2, accessor = accessor.value }
+                                            }
+                                        )
+                                        (located parseArrayAccess)
+                                    , map
+                                        (\accessor ->
+                                            { from =
+                                                e1.from
+                                            , to =
+                                                accessor.to
+                                            , value =
+                                                PlaceExpr { target = e2, accessor = accessor.value }
+                                            }
+                                        )
+                                        (located parseStructAccess)
+                                    ]
                             , succeed ()
                                 |> map (\_ -> Done e2)
                             ]
