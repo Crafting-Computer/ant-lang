@@ -117,3 +117,39 @@ dummyLocated a =
     , value =
         a
     }
+
+withLocation : Located a -> b -> Located b
+withLocation loc value =
+  { from =
+    loc.from
+  , to =
+    loc.to
+  , value =
+    value
+  }
+
+
+changeLocation : Located a -> Located b -> Located b
+changeLocation loc value =
+  withLocation loc value.value
+
+
+getLocationFromList : List (Located a) -> Located ()
+getLocationFromList locations =
+    case locations of
+        [] -> -- impossible
+            dummyLocated ()
+        
+        firstLocation :: restLocations ->
+            { from =
+                firstLocation.from
+            , to =
+                case List.Extra.last restLocations of
+                    Just lastLocation ->
+                        lastLocation.to
+                    
+                    Nothing ->
+                        firstLocation.to
+            , value =
+                ()
+            }

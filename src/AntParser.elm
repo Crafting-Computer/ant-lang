@@ -16,6 +16,8 @@ module AntParser exposing
     , Expr(..)
     , FunctionDecl
     , Literal(..)
+    , Path
+    , PathSegment(..)
     , Pattern(..)
     , Problem(..)
     , Stmt(..)
@@ -130,6 +132,8 @@ type Type
         { name : Located String
         , fields : Dict String ( Located String, Located Type )
         }
+    | FunctionType FunctionDecl
+    | ArrayType
 
 
 type Pattern
@@ -183,7 +187,7 @@ type Accessor
 
 
 type alias Path =
-    ( PathSegment, List PathSegment )
+    ( Located PathSegment, List (Located PathSegment) )
 
 
 type PathSegment
@@ -574,13 +578,13 @@ pathExpr : AntParser Expr
 pathExpr =
     map PathExpr <|
         succeed Tuple.pair
-            |= pathSegment
+            |= located pathSegment
             |= loop []
                 (\revSegments ->
                     oneOf
                         [ succeed (\segment -> Loop <| segment :: revSegments)
                             |. symbol (Token "::" <| ExpectingSymbol "::")
-                            |= pathSegment
+                            |= located pathSegment
                         , succeed ()
                             |> map (\_ -> Done <| List.reverse revSegments)
                         ]
@@ -1315,9 +1319,9 @@ cleanExpr e =
                 )
 
 
-cleanPathSegment : PathSegment -> CleanPathSegment
+cleanPathSegment : Located PathSegment -> CleanPathSegment
 cleanPathSegment s =
-    case s of
+    case s.value of
         IdentifierSegment name ->
             CIdentifierSegment name.value
 
