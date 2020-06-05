@@ -4,6 +4,7 @@ import AntParser
     exposing
         ( Accessor(..)
         , Block
+        , CleanExpr(..)
         , Decl(..)
         , Expr(..)
         , FunctionDecl
@@ -15,8 +16,7 @@ import AntParser
         , Variable
         )
 import Dict exposing (Dict)
-import List.Extra
-import Location exposing (Located, dummyLocated, getLocationFromList, showLocation, withLocation)
+import Location exposing (Located, changeLocation, dummyLocated, getLocationFromList, showLocation, withLocation)
 
 
 type Problem
@@ -49,18 +49,18 @@ checkDecls ds =
     let
         ( problems, declared ) =
             List.foldl
-                (\d ( ps, { declaredTypes, declaredFunctions } as declarations ) ->
+                (\d ( ps, { declaredTypes, declaredFunctions } as ds1 ) ->
                     case d of
                         StructDecl { name, fields } ->
                             let
                                 next =
                                     ( ps
-                                    , { declarations
+                                    , { ds1
                                         | declaredTypes =
                                             Dict.insert
                                                 name.value
                                                 (withLocation name <| StructType { name = name, fields = fields })
-                                                declarations.declaredTypes
+                                                ds1.declaredTypes
                                       }
                                     )
                             in
@@ -69,7 +69,7 @@ checkDecls ds =
                                     case prevTy.value of
                                         StructType prevStructTy ->
                                             ( DuplicatedStructDecl prevStructTy.name name :: ps
-                                            , declarations
+                                            , ds1
                                             )
 
                                         _ ->
@@ -82,14 +82,16 @@ checkDecls ds =
                             case Dict.get name.value declaredFunctions of
                                 Just prevFunction ->
                                     ( DuplicatedFunctionDecl prevFunction.name name :: ps
-                                    , declarations
+                                    , ds1
                                     )
 
                                 Nothing ->
                                     ( ps
-                                    , { declarations
+                                    , { ds1
                                         | declaredFunctions =
-                                            Dict.insert name.value functionDecl declarations.declaredFunctions
+                                            Dict.insert name.value
+                                                (substituteNamedTypeInFunctionDecl ds1 functionDecl)
+                                                ds1.declaredFunctions
                                       }
                                     )
 
@@ -101,7 +103,9 @@ checkDecls ds =
                                             ( ps2
                                             , { ds2
                                                 | declaredFunctions =
-                                                    Dict.insert functionDecl.name.value functionDecl declarations.declaredFunctions
+                                                    Dict.insert functionDecl.name.value
+                                                        (substituteNamedTypeInFunctionDecl ds2 functionDecl)
+                                                        ds1.declaredFunctions
                                               }
                                             )
                                     in
@@ -123,7 +127,7 @@ checkDecls ds =
                                         Nothing ->
                                             next
                                 )
-                                ( [], declarations )
+                                ( [], ds1 )
                                 functions
                 )
                 ( [], { declaredTypes = Dict.empty, declaredFunctions = Dict.empty, declaredVariables = Dict.empty } )
@@ -156,7 +160,7 @@ checkDecl ds d =
                     case fieldType.value of
                         NamedType fieldTypeName ->
                             if not <| Dict.member fieldTypeName.value ds.declaredTypes then
-                                UndefinedNamedType fieldName :: ps
+                                UndefinedNamedType fieldTypeName :: ps
 
                             else
                                 ps
@@ -180,24 +184,36 @@ checkFunctionDecl ds functionDecl =
         { name, parameters, returnType, body } =
             functionDecl
 
-        ( ps1, ds2 ) =
+        ( ps3, ds2 ) =
             List.foldl
-                (\( paramPattern, paramType ) ( ps, ds1 ) ->
+                (\( paramPattern, paramType ) ( ps1, ds1 ) ->
                     case paramPattern.value of
                         IdentifierPattern param ->
                             case getVariable param.name.value ds1 of
                                 Just ( prevParam, _ ) ->
-                                    ( DuplicatedVariable prevParam.name param.name :: ps
+                                    ( DuplicatedVariable prevParam.name param.name :: ps1
                                     , ds1
                                     )
 
                                 Nothing ->
-                                    ( ps
-                                    , addVariable param paramType ds1
-                                    )
+                                    case substituteNamedType ds1 ps1 paramType of
+                                        Ok substType ->
+                                            ( ps1
+                                            , addVariable param substType ds1
+                                            )
+
+                                        Err ps2 ->
+                                            ( ps2
+                                            , ds1
+                                            )
 
                         _ ->
-                            ( ps, ds1 )
+                            case substituteNamedType ds1 ps1 paramType of
+                                Ok _ ->
+                                    ( ps1, ds1 )
+
+                                Err ps2 ->
+                                    ( ps2, ds1 )
                 )
                 ( [], ds )
                 parameters
@@ -205,19 +221,77 @@ checkFunctionDecl ds functionDecl =
         -- add this function as variable to allow recursive calls in function body
         ds3 =
             addVariable { name = name, mutable = False }
-                (withLocation name <| FunctionType functionDecl)
+                (withLocation name <| FunctionType <| substituteNamedTypeInFunctionDecl ds functionDecl)
                 ds2
     in
     case getTypeFromBlock ds3 body of
         Ok ( bodyType, _ ) ->
-            if areEqualTypes returnType bodyType then
-                ps1
+            case substituteNamedType ds3 ps3 returnType of
+                Ok substType ->
+                    if areEqualTypes substType bodyType then
+                        ps3
 
-            else
-                MismatchedTypes returnType bodyType :: ps1
+                    else
+                        MismatchedTypes substType bodyType :: ps3
+
+                Err ps4 ->
+                    ps4
 
         Err ps2 ->
-            ps2 ++ ps1
+            ps2 ++ ps3
+
+
+substituteNamedType :
+    Declarations
+    -> List Problem
+    -> Located Type
+    -> Result (List Problem) (Located Type)
+substituteNamedType ds ps ty =
+    case ty.value of
+        NamedType typeName ->
+            case getType typeName.value ds of
+                Just substType ->
+                    Ok <| changeLocation ty <| substType
+
+                Nothing ->
+                    Err <| UndefinedNamedType typeName :: ps
+
+        _ ->
+            Ok ty
+
+
+substituteNamedTypeInFunctionDecl :
+    Declarations
+    -> FunctionDecl
+    -> FunctionDecl
+substituteNamedTypeInFunctionDecl ds { name, namespace, parameters, returnType, body } =
+    let
+        substParameters =
+            List.map
+                (\( paramName, paramType ) ->
+                    case substituteNamedType ds [] paramType of
+                        Ok substType ->
+                            ( paramName, substType )
+
+                        Err _ ->
+                            ( paramName, paramType )
+                )
+                parameters
+
+        substReturnType =
+            case substituteNamedType ds [] returnType of
+                Ok substType ->
+                    substType
+                
+                Err _ ->
+                    returnType
+    in
+    { name = name
+    , namespace = namespace
+    , parameters = substParameters
+    , returnType = substReturnType
+    , body = body
+    }
 
 
 checkBlock : Declarations -> Located Block -> List Problem
@@ -297,22 +371,74 @@ checkStmt ds s =
                     target.value.name
             in
             case getVariable targetName.value ds of
-                Just ( declaredVar, declaredTy ) ->
+                Just ( declaredVar, declaredRootType ) ->
                     if not declaredVar.mutable then
                         ( [ MutateImmutableVariable targetName ]
                         , ds
                         )
 
                     else
-                        case getTypeFromExpr ds value of
-                            Ok ( ty, ds1 ) ->
-                                if not <| areEqualTypes declaredTy ty then
-                                    ( [ MismatchedTypes declaredTy ty ]
-                                    , ds1
-                                    )
+                        let
+                            declaredType =
+                                List.foldl
+                                    (\accessor result ->
+                                        result
+                                            |> Result.andThen
+                                                (\ty ->
+                                                    case accessor of
+                                                        StructAccess fieldName ->
+                                                            case ty.value of
+                                                                StructType { fields } ->
+                                                                    case Dict.get fieldName.value fields of
+                                                                        Just ( _, fieldType ) ->
+                                                                            Ok <| changeLocation fieldName fieldType
 
-                                else
-                                    ( [], ds1 )
+                                                                        Nothing ->
+                                                                            Err
+                                                                                [ ExpectingStructField fieldName <|
+                                                                                    changeLocation fieldName ty
+                                                                                ]
+
+                                                                _ ->
+                                                                    Err [ ExpectingStructType ty ]
+
+                                                        ArrayAccess index ->
+                                                            case ty.value of
+                                                                ArrayType ->
+                                                                    case getTypeFromExpr ds index of
+                                                                        Ok ( indexType, _ ) ->
+                                                                            case indexType.value of
+                                                                                IntType ->
+                                                                                    Ok <| changeLocation index indexType
+
+                                                                                -- all array elements are integers
+                                                                                _ ->
+                                                                                    Err [ ExpectingIntType indexType ]
+
+                                                                        Err ps ->
+                                                                            Err ps
+
+                                                                _ ->
+                                                                    Err [ ExpectingArrayType ty ]
+                                                )
+                                    )
+                                    (Ok <| changeLocation targetName declaredRootType)
+                                    target.value.accessors
+                        in
+                        case declaredType of
+                            Ok targetType ->
+                                case getTypeFromExpr ds value of
+                                    Ok ( ty, ds1 ) ->
+                                        if not <| areEqualTypes targetType ty then
+                                            ( [ MismatchedTypes targetType ty ]
+                                            , ds1
+                                            )
+
+                                        else
+                                            ( [], ds1 )
+
+                                    Err ps ->
+                                        ( ps, ds )
 
                             Err ps ->
                                 ( ps, ds )
@@ -677,15 +803,6 @@ areEqualTypes t1 t2 =
         ( StructType s1, StructType s2 ) ->
             s1.name.value == s2.name.value
 
-        ( NamedType n1, StructType s2 ) ->
-            n1.value == s2.name.value
-
-        ( StructType s1, NamedType n2 ) ->
-            s1.name.value == n2.value
-
-        ( NamedType n1, NamedType n2 ) ->
-            n1.value == n2.value
-
         _ ->
             False
 
@@ -965,7 +1082,7 @@ showUndefinedProblem kind n src =
     , showLocation src n
     , showHintIntro
     , "1. Change " ++ n.value ++ " to refer to a defined " ++ kind ++ "."
-    , "2. Define " ++ n.value ++ " somewhere."
+    , "2. Define " ++ n.value ++ "."
     ]
 
 
