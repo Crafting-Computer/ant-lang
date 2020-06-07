@@ -5,16 +5,23 @@ import AntParser
         ( Accessor(..)
         , Block
         , CleanExpr(..)
+        , CleanNamespace
         , Decl(..)
         , Expr(..)
         , FunctionDecl
+        , FunctionHeader
         , Literal(..)
+        , Namespace(..)
         , PathSegment(..)
         , Pattern(..)
         , Stmt(..)
+        , TraitDeclaration
+        , TraitFunctionDecl
         , Type(..)
         , Variable
+        , cleanNamespace
         )
+import AssocList as AllDict
 import Dict exposing (Dict)
 import Location exposing (Located, changeLocation, dummyLocated, getLocationFromList, showLocation, withLocation)
 
@@ -23,11 +30,13 @@ type Problem
     = DuplicatedStructDecl (Located String) (Located String)
     | DuplicatedFunctionDecl (Located String) (Located String)
     | DuplicatedVariable (Located String) (Located String)
+    | DuplicatedTraitDecl (Located String) (Located String)
     | UndefinedNamedType (Located String)
     | UndefinedStructType (Located String)
     | UndefinedVariable (Located String)
-    | UndefinedNamespace (Located String)
+    | UndefinedNamespace Namespace
     | UndefinedFunction (Located String)
+    | UndefinedTrait (Located String)
     | MutateImmutableVariable (Located String)
     | MismatchedTypes (Located Type) (Located Type)
     | ExpectingFunctionCall (Located Expr)
@@ -37,19 +46,21 @@ type Problem
     | ExpectingStructType (Located Type)
     | ExpectingfunctionType (Located Type)
     | ExpectingStructField (Located String) (Located Type)
+    | MissingTraitFunction TraitFunctionDecl (Located String)
     | MissingStructFields (Dict String ( Located String, Located Type )) (Located Type)
     | ExtraStructField (Located String)
     | ExtraPathSegments (List (Located PathSegment))
     | ExtraArguments (List (Located Expr))
-    | MissingArguments (List ( Located Pattern, Located Type )) (List (Located Expr))
+    | MissingArguments (List ( Located Pattern, Located Type )) (Located (List (Located Expr)))
+    | UnexpectedTraitInPathSegment (Located String)
 
 
 checkDecls : List Decl -> Result (List Problem) ()
-checkDecls ds =
+checkDecls decls =
     let
         ( problems, declared ) =
             List.foldl
-                (\d ( ps, { declaredTypes, declaredFunctions } as ds1 ) ->
+                (\d ( ps, { declaredTypes } as ds1 ) ->
                     case d of
                         StructDecl { name, fields } ->
                             let
@@ -78,8 +89,8 @@ checkDecls ds =
                                 Nothing ->
                                     next
 
-                        FnDecl ({ name } as functionDecl) ->
-                            case Dict.get name.value declaredFunctions of
+                        FnDecl ({ namespace, name } as functionDecl) ->
+                            case getFunction name.value namespace ds1 of
                                 Just prevFunction ->
                                     ( DuplicatedFunctionDecl prevFunction.name name :: ps
                                     , ds1
@@ -87,54 +98,90 @@ checkDecls ds =
 
                                 Nothing ->
                                     ( ps
-                                    , { ds1
-                                        | declaredFunctions =
-                                            Dict.insert name.value
-                                                (substituteNamedTypeInFunctionDecl ds1 functionDecl)
-                                                ds1.declaredFunctions
-                                      }
+                                    , addFunction (substituteNamedTypeInFunctionHeader ds1 functionDecl) ds1
                                     )
 
                         ImplDecl { target, functions } ->
-                            List.foldl
-                                (\functionDecl ( ps2, ds2 ) ->
+                            Dict.foldl
+                                (\_ functionDecl ( ps2, ds2 ) ->
                                     let
                                         next =
                                             ( ps2
-                                            , { ds2
-                                                | declaredFunctions =
-                                                    Dict.insert functionDecl.name.value
-                                                        (substituteNamedTypeInFunctionDecl ds2 functionDecl)
-                                                        ds1.declaredFunctions
-                                              }
+                                            , addFunction
+                                                (substituteNamedTypeInFunctionHeader ds2 <|
+                                                    substituteSelfTypeInFunctionHeader (withLocation target <| NamedType target) <|
+                                                        functionDecl
+                                                )
+                                                ds2
                                             )
                                     in
-                                    case Dict.get functionDecl.name.value declaredFunctions of
+                                    case getFunction functionDecl.name.value functionDecl.namespace ds2 of
                                         Just prevFunction ->
-                                            case prevFunction.namespace of
-                                                Just namespace ->
-                                                    if namespace.value == target.value then
-                                                        ( DuplicatedFunctionDecl prevFunction.name functionDecl.name :: ps2
-                                                        , ds2
-                                                        )
+                                            if areEqualNamespaces functionDecl.namespace prevFunction.namespace then
+                                                ( DuplicatedFunctionDecl prevFunction.name functionDecl.name :: ps2
+                                                , ds2
+                                                )
 
-                                                    else
-                                                        next
-
-                                                Nothing ->
-                                                    next
+                                            else
+                                                next
 
                                         Nothing ->
                                             next
                                 )
                                 ( [], ds1 )
                                 functions
+
+                        TraitDecl { name, functions } ->
+                            case getTrait name.value ds1 of
+                                Just prevTrait ->
+                                    ( DuplicatedTraitDecl prevTrait.name name :: ps
+                                    , ds1
+                                    )
+
+                                Nothing ->
+                                    Tuple.mapSecond
+                                        (\fs ->
+                                            { ds1
+                                                | declaredTraits =
+                                                    Dict.insert name.value
+                                                        { name = name, functions = fs }
+                                                        ds1.declaredTraits
+                                            }
+                                        )
+                                    <|
+                                        Dict.foldl
+                                            (\_ functionDecl ( ps2, fs ) ->
+                                                let
+                                                    next =
+                                                        ( ps2
+                                                        , Dict.insert functionDecl.name.value
+                                                            (substituteNamedTypeInFunctionHeader ds1 functionDecl)
+                                                            fs
+                                                        )
+                                                in
+                                                case Dict.get functionDecl.name.value fs of
+                                                    Just prevFunction ->
+                                                        ( DuplicatedFunctionDecl prevFunction.name functionDecl.name :: ps2
+                                                        , fs
+                                                        )
+
+                                                    Nothing ->
+                                                        next
+                                            )
+                                            ( [], Dict.empty )
+                                            functions
                 )
-                ( [], { declaredTypes = Dict.empty, declaredFunctions = Dict.empty, declaredVariables = Dict.empty } )
-                ds
+                ( []
+                , { declaredTypes = Dict.empty
+                  , declaredFunctions = AllDict.empty
+                  , declaredVariables = Dict.empty
+                  , declaredTraits = Dict.empty
+                  }
+                )
+                decls
     in
     case
-        (List.concat <| List.map (checkDecl declared) ds)
+        (List.concat <| List.map (checkDecl declared) decls)
             ++ problems
     of
         [] ->
@@ -146,7 +193,8 @@ checkDecls ds =
 
 type alias Declarations =
     { declaredTypes : Dict String (Located Type)
-    , declaredFunctions : Dict String FunctionDecl
+    , declaredFunctions : AllDict.Dict CleanNamespace (Dict String FunctionDecl)
+    , declaredTraits : Dict String TraitDeclaration
     , declaredVariables : Dict String ( Variable, Located Type )
     }
 
@@ -174,8 +222,109 @@ checkDecl ds d =
         FnDecl f ->
             checkFunctionDecl ds f
 
-        ImplDecl { functions } ->
-            List.concat <| List.map (checkFunctionDecl ds) functions
+        ImplDecl { target, trait, functions } ->
+            let
+                implFunctions =
+                    Maybe.withDefault functions <|
+                        -- impossible
+                        getNamespace
+                            (StructNamespace target trait)
+                            ds
+            in
+            case getType target.value ds of
+                Just targetType ->
+                    (case trait of
+                        Nothing ->
+                            []
+
+                        Just traitName ->
+                            case getTrait traitName.value ds of
+                                Nothing ->
+                                    [ UndefinedTrait traitName ]
+
+                                Just traitDeclaration ->
+                                    Dict.foldl
+                                        (\_ traitFunction ps ->
+                                            case Dict.get traitFunction.name.value implFunctions of
+                                                Nothing ->
+                                                    MissingTraitFunction traitFunction target :: ps
+
+                                                Just functionDecl ->
+                                                    let
+                                                        traitFunctionType =
+                                                            withLocation traitDeclaration.name <|
+                                                                FunctionType <|
+                                                                    substituteSelfTypeInFunctionHeader targetType <|
+                                                                        traitFunction
+
+                                                        functionType =
+                                                            withLocation functionDecl.name <|
+                                                                FunctionType <|
+                                                                    getHeaderFromFunctionDecl functionDecl
+                                                    in
+                                                    if areEqualTypes traitFunctionType functionType then
+                                                        ps
+
+                                                    else
+                                                        MismatchedTypes traitFunctionType functionType :: ps
+                                        )
+                                        []
+                                        traitDeclaration.functions
+                    )
+                        ++ (List.concat <|
+                                List.map (checkFunctionDecl ds) <|
+                                    Dict.values implFunctions
+                           )
+
+                Nothing ->
+                    [ UndefinedNamedType target ]
+
+        TraitDecl { functions } ->
+            List.concat <|
+                List.map (checkFunctionHeader ds) <|
+                    Dict.values functions
+
+
+checkFunctionHeader : Declarations -> FunctionHeader a -> List Problem
+checkFunctionHeader ds f =
+    let
+        { parameters, returnType } =
+            f
+
+        ps3 =
+            List.foldl
+                (\( paramPattern, paramType ) ps1 ->
+                    case paramPattern.value of
+                        IdentifierPattern param ->
+                            case getVariable param.name.value ds of
+                                Just ( prevParam, _ ) ->
+                                    DuplicatedVariable prevParam.name param.name :: ps1
+
+                                Nothing ->
+                                    case substituteNamedType ds ps1 paramType of
+                                        Ok _ ->
+                                            ps1
+
+                                        Err ps2 ->
+                                            ps2
+
+                        _ ->
+                            case substituteNamedType ds ps1 paramType of
+                                Ok _ ->
+                                    ps1
+
+                                Err ps2 ->
+                                    ps2
+                )
+                []
+                parameters
+    in
+    case substituteNamedType ds ps3 returnType of
+        Ok substType ->
+            ps3
+
+        Err ps4 ->
+            ps4
 
 
 checkFunctionDecl : Declarations -> FunctionDecl -> List Problem
@@ -221,7 +370,11 @@ checkFunctionDecl ds functionDecl =
         -- add this function as variable to allow recursive calls in function body
         ds3 =
             addVariable { name = name, mutable = False }
-                (withLocation name <| FunctionType <| substituteNamedTypeInFunctionDecl ds functionDecl)
+                (withLocation name <|
+                    FunctionType <|
+                        getHeaderFromFunctionDecl <|
+                            substituteNamedTypeInFunctionHeader ds functionDecl
+                )
                 ds2
     in
     case getTypeFromBlock ds3 body of
@@ -260,12 +413,50 @@ substituteNamedType ds ps ty =
             Ok ty
 
 
-substituteNamedTypeInFunctionDecl :
-    Declarations
-    -> FunctionDecl
-    -> FunctionDecl
-substituteNamedTypeInFunctionDecl ds { name, namespace, parameters, returnType, body } =
+substituteSelfTypeInFunctionHeader :
+    Located Type
+    -> FunctionHeader a
+    -> FunctionHeader a
+substituteSelfTypeInFunctionHeader substType header =
     let
+        { parameters, returnType } =
+            header
+
+        substParameters =
+            List.map
+                (\( paramName, paramType ) ->
+                    case paramType.value of
+                        SelfType ->
+                            ( paramName, substType )
+
+                        _ ->
+                            ( paramName, paramType )
+                )
+                parameters
+
+        substReturnType =
+            case returnType.value of
+                SelfType ->
+                    substType
+
+                _ ->
+                    returnType
+    in
+    { header
+        | parameters = substParameters
+        , returnType = substReturnType
+    }
+
+
+substituteNamedTypeInFunctionHeader :
+    Declarations
+    -> FunctionHeader a
+    -> FunctionHeader a
+substituteNamedTypeInFunctionHeader ds header =
+    let
+        { name, namespace, parameters, returnType } =
+            header
+
         substParameters =
             List.map
                 (\( paramName, paramType ) ->
@@ -282,15 +473,24 @@ substituteNamedTypeInFunctionDecl ds { name, namespace, parameters, returnType, 
             case substituteNamedType ds [] returnType of
                 Ok substType ->
                     substType
-                
+
                 Err _ ->
                     returnType
     in
+    { header
+        | name = name
+        , namespace = namespace
+        , parameters = substParameters
+        , returnType = substReturnType
+    }
+
+
+getHeaderFromFunctionDecl : FunctionDecl -> FunctionHeader {}
+getHeaderFromFunctionDecl { name, namespace, parameters, returnType } =
     { name = name
     , namespace = namespace
-    , parameters = substParameters
-    , returnType = substReturnType
-    , body = body
+    , parameters = parameters
+    , returnType = returnType
     }
 
 
@@ -611,12 +811,12 @@ getTypeFromExpr ds e =
                                 FunctionType f ->
                                     let
                                         unspecifiedParameters =
-                                            List.drop (List.length arguments) f.parameters
+                                            List.drop (List.length arguments.value) f.parameters
                                     in
                                     if List.isEmpty unspecifiedParameters then
                                         let
                                             extraArguments =
-                                                List.drop (List.length f.parameters) arguments
+                                                List.drop (List.length f.parameters) arguments.value
                                         in
                                         if List.isEmpty extraArguments then
                                             (\( problems, ds4 ) ->
@@ -644,7 +844,7 @@ getTypeFromExpr ds e =
                                                                 ( ps2 ++ ps1, ds2 )
                                                     )
                                                     ( [], ds1 )
-                                                    (List.map2 Tuple.pair f.parameters arguments)
+                                                    (List.map2 Tuple.pair f.parameters arguments.value)
 
                                         else
                                             Err [ ExtraArguments extraArguments ]
@@ -706,26 +906,47 @@ getTypeFromExpr ds e =
                                         Ok ( ty.value, ds )
 
                                     Nothing ->
-                                        Err [ UndefinedVariable name ]
+                                        case getFunction name.value ModuleNamespace ds of
+                                            Just f ->
+                                                Ok ( FunctionType <| getHeaderFromFunctionDecl f, ds )
+
+                                            Nothing ->
+                                                Err [ UndefinedVariable name ]
+
+                            QualifiedSegment { trait } ->
+                                Err [ UnexpectedTraitInPathSegment trait ]
 
                     secondSegment :: thirdOnwardSegments ->
                         case thirdOnwardSegments of
                             [] ->
-                                case firstSegment.value of
-                                    IdentifierSegment name ->
-                                        case getNamespace name.value ds of
-                                            Just functions ->
-                                                case secondSegment.value of
-                                                    IdentifierSegment functionName ->
-                                                        case Dict.get functionName.value functions of
-                                                            Just function ->
-                                                                Ok ( FunctionType function, ds )
+                                let
+                                    namespace =
+                                        case firstSegment.value of
+                                            IdentifierSegment name ->
+                                                StructNamespace name Nothing
 
-                                                            Nothing ->
-                                                                Err [ UndefinedFunction functionName ]
+                                            QualifiedSegment { struct, trait } ->
+                                                StructNamespace struct (Just trait)
+                                in
+                                case getNamespace namespace ds of
+                                    Just functions ->
+                                        case secondSegment.value of
+                                            IdentifierSegment functionName ->
+                                                case Dict.get functionName.value functions of
+                                                    Just function ->
+                                                        Ok
+                                                            ( FunctionType <| getHeaderFromFunctionDecl <| function
+                                                            , ds
+                                                            )
 
-                                            Nothing ->
-                                                Err [ UndefinedNamespace name ]
+                                                    Nothing ->
+                                                        Err [ UndefinedFunction functionName ]
+
+                                            QualifiedSegment { trait } ->
+                                                Err [ UnexpectedTraitInPathSegment trait ]
+
+                                    Nothing ->
+                                        Err [ UndefinedNamespace namespace ]
 
                             _ ->
                                 Err [ ExtraPathSegments thirdOnwardSegments ]
@@ -803,6 +1024,37 @@ areEqualTypes t1 t2 =
         ( StructType s1, StructType s2 ) ->
             s1.name.value == s2.name.value
 
+        ( ArrayType, ArrayType ) ->
+            True
+
+        ( FunctionType f1, FunctionType f2 ) ->
+            List.length f1.parameters
+                == List.length f2.parameters
+                && List.all
+                    (\( ( _, paramType1 ), ( _, paramType2 ) ) ->
+                        areEqualTypes paramType1 paramType2
+                    )
+                    (List.map2 Tuple.pair f1.parameters f2.parameters)
+                && areEqualTypes f1.returnType f2.returnType
+
+        _ ->
+            False
+
+
+areEqualNamespaces : Namespace -> Namespace -> Bool
+areEqualNamespaces n1 n2 =
+    case ( n1, n2 ) of
+        ( ModuleNamespace, ModuleNamespace ) ->
+            True
+
+        ( StructNamespace s1 t1, StructNamespace s2 t2 ) ->
+            s1.value
+                == s2.value
+                && (Maybe.map .value t1 == Maybe.map .value t2)
+
+        ( TraitNamespace t1, TraitNamespace t2 ) ->
+            t1.value == t2.value
+
         _ ->
             False
 
@@ -825,26 +1077,43 @@ getType name ds =
     Dict.get name ds.declaredTypes
 
 
-getNamespace : String -> Declarations -> Maybe (Dict String FunctionDecl)
-getNamespace name ds =
-    (\dict ->
-        if Dict.isEmpty dict then
-            Nothing
+getNamespace : Namespace -> Declarations -> Maybe (Dict String FunctionDecl)
+getNamespace namespace ds =
+    AllDict.get (cleanNamespace namespace) ds.declaredFunctions
 
-        else
-            Just dict
-    )
-    <|
-        Dict.filter
-            (\_ { namespace } ->
-                case namespace of
-                    Just name2 ->
-                        name2.value == name
 
-                    Nothing ->
-                        False
+getFunction : String -> Namespace -> Declarations -> Maybe FunctionDecl
+getFunction name namespace ds =
+    getNamespace namespace ds
+        |> Maybe.andThen
+            (\functions ->
+                Dict.get name functions
             )
-            ds.declaredFunctions
+
+
+addFunction : FunctionDecl -> Declarations -> Declarations
+addFunction f ds =
+    case getNamespace f.namespace ds of
+        Just functions ->
+            { ds
+                | declaredFunctions =
+                    AllDict.insert (cleanNamespace f.namespace)
+                        (Dict.insert f.name.value f functions)
+                        ds.declaredFunctions
+            }
+
+        Nothing ->
+            { ds
+                | declaredFunctions =
+                    AllDict.insert (cleanNamespace f.namespace)
+                        (Dict.singleton f.name.value f)
+                        ds.declaredFunctions
+            }
+
+
+getTrait : String -> Declarations -> Maybe TraitDeclaration
+getTrait n ds =
+    Dict.get n ds.declaredTraits
 
 
 showProblems : String -> List Problem -> String
@@ -865,6 +1134,9 @@ showProblem src p =
             DuplicatedVariable n1 n2 ->
                 showDuplicatedProblem "variable" n1 n2 src
 
+            DuplicatedTraitDecl n1 n2 ->
+                showDuplicatedProblem "trait" n1 n2 src
+
             UndefinedNamedType n ->
                 showUndefinedProblem "type" n src
 
@@ -874,11 +1146,38 @@ showProblem src p =
             UndefinedVariable n ->
                 showUndefinedProblem "variable" n src
 
-            UndefinedNamespace n ->
+            UndefinedNamespace namespace ->
+                let
+                    n =
+                        case namespace of
+                            ModuleNamespace ->
+                                -- impossible
+                                dummyLocated ""
+
+                            StructNamespace struct trait ->
+                                case trait of
+                                    Just t ->
+                                        { from =
+                                            struct.from
+                                        , to =
+                                            t.to
+                                        , value =
+                                            "<" ++ struct.value ++ " as " ++ t.value ++ ">"
+                                        }
+
+                                    Nothing ->
+                                        struct
+
+                            TraitNamespace trait ->
+                                trait
+                in
                 showUndefinedProblem "namespace" n src
 
             UndefinedFunction n ->
                 showUndefinedProblem "function" n src
+
+            UndefinedTrait n ->
+                showUndefinedProblem "trait" n src
 
             MutateImmutableVariable n ->
                 [ "-- MUTATE IMMUTABLE VARIABLE"
@@ -918,6 +1217,17 @@ showProblem src p =
 
             ExpectingfunctionType n ->
                 showExpectingTypeProblem "function" n src
+
+            MissingTraitFunction traitFunction implTarget ->
+                [ "-- MISSING TRAIT FUNCTION"
+                , "I found that you missed a trait function here:"
+                , showLocation src implTarget
+                , "I'm expecting a function with this header:"
+                , showFunctionHeader traitFunction
+                , showHintIntro
+                , "1. Define the missing function " ++ traitFunction.name.value ++ "."
+                , "2. Maybe you mean to implement another trait?"
+                ]
 
             ExpectingStructField fieldName actualType ->
                 [ "-- EXPECTING STRUCT FIELD"
@@ -963,28 +1273,48 @@ showProblem src p =
                 ]
 
             ExtraArguments arguments ->
+                let
+                    extraArgLength =
+                        String.fromInt <| List.length arguments
+                in
                 [ "-- EXTRA ARGUMENTS"
-                , "I found " ++ (String.fromInt <| List.length arguments) ++ " extra function arguments here:"
+                , "I found " ++ extraArgLength ++ " extra function arguments here:"
                 , showLocation src <| getLocationFromList arguments
                 , showHintIntro
-                , "1. Remove the extra arguments."
-                , "2. Reduce the function parameters to fit your arguments."
+                , "1. Remove the " ++ extraArgLength ++ " extra arguments."
+                , "2. Increase the function parameters by " ++ extraArgLength ++ " to fit your arguments."
                 ]
 
             MissingArguments parameters arguments ->
+                let
+                    extraParamLength =
+                        String.fromInt <| List.length parameters
+                in
                 [ "-- MISSING ARGUMENTS"
-                , "I'm expecting " ++ (String.fromInt <| List.length parameters) ++ " more arguments here:"
-                , showLocation src <| getLocationFromList arguments
-                , "The missing arguments are:"
+                , "I'm expecting " ++ extraParamLength ++ " more arguments here:"
+                , showLocation src arguments
+                , "The missing arguments are:\n"
                 , List.foldl
                     (\( paramName, paramType ) str ->
-                        str ++ "\n" ++ showPattern paramName ++ " : " ++ showType paramType
+                        str ++ showPattern paramName ++ " : " ++ showType paramType ++ "\n"
                     )
                     ""
                     parameters
                 , showHintIntro
-                , "1. Add the missing arguments."
-                , "2. Increase the function parameters to fit your arguments."
+                , "1. Add the missing " ++ extraParamLength ++ " arguments."
+                , "2. Reduce the function parameters by " ++ extraParamLength ++ " to fit your arguments."
+                ]
+
+            UnexpectedTraitInPathSegment trait ->
+                [ "-- UNEXPECTED TRAIT IN PATH SEGMENT"
+                , "I'm not expecting a trait bound " ++ trait.value ++ " in path segment:"
+                , showLocation src trait
+                , showHintIntro
+                , "1. Remove the trait bound"
+                , "2. Maybe you mean to access a trait method like this?"
+                , "   <Person as Display>::show"
+                , "   In the first path segment, the trait bound 'Display' is used to specify which trait of the struct 'Person' we care about."
+                , "   In the second path segment, we specify the method 'show' in the trait 'Display'."
                 ]
 
 
@@ -1036,24 +1366,32 @@ showType t =
                     )
                 ++ "\n}"
 
-        FunctionType { name, parameters, returnType } ->
-            "fn "
-                ++ name.value
-                ++ " ("
-                ++ indentStr
-                    (List.foldl
-                        (\( _, paramType ) str ->
-                            str ++ "\n" ++ showType paramType ++ ","
-                        )
-                        ""
-                        parameters
-                    )
-                ++ "\n)"
-                ++ "\n: "
-                ++ showType returnType
+        FunctionType f ->
+            showFunctionHeader f
 
         ArrayType ->
             "Array"
+
+        SelfType ->
+            "Self"
+
+
+showFunctionHeader : FunctionHeader a -> String
+showFunctionHeader { name, parameters, returnType } =
+    "fn "
+        ++ name.value
+        ++ " ("
+        ++ indentStr
+            (List.foldl
+                (\( _, paramType ) str ->
+                    str ++ "\n" ++ showType paramType ++ ","
+                )
+                ""
+                parameters
+            )
+        ++ "\n)"
+        ++ "\n: "
+        ++ showType returnType
 
 
 indentStr : String -> String

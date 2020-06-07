@@ -7,6 +7,7 @@ module AntParser exposing
     , CleanDecl(..)
     , CleanExpr(..)
     , CleanLiteral(..)
+    , CleanNamespace(..)
     , CleanPath
     , CleanPathSegment(..)
     , CleanPattern(..)
@@ -18,17 +19,22 @@ module AntParser exposing
     , Decl(..)
     , Expr(..)
     , FunctionDecl
+    , FunctionHeader
     , Literal(..)
+    , Namespace(..)
     , Path
     , PathSegment(..)
     , Pattern(..)
     , Problem(..)
     , Stmt(..)
+    , TraitDeclaration
+    , TraitFunctionDecl
     , Type(..)
     , Variable
     , cleanDecl
     , cleanExpr
     , cleanExprs
+    , cleanNamespace
     , cleanStmt
     , cleanStmts
     , parseDecl
@@ -39,6 +45,7 @@ module AntParser exposing
     )
 
 import Dict exposing (Dict)
+import Html.Attributes exposing (id)
 import List.Extra
 import Location exposing (Located, dummyLocated, showProblemLocation)
 import Parser.Advanced exposing (..)
@@ -74,7 +81,7 @@ type Expr
         }
     | CallExpr
         { caller : Located Expr
-        , arguments : List (Located Expr)
+        , arguments : Located (List (Located Expr))
         }
     | PlaceExpr
         { target : Located Expr
@@ -105,17 +112,39 @@ type Decl
     | FnDecl FunctionDecl
     | ImplDecl
         { target : Located String
-        , functions : List FunctionDecl
+        , trait : Maybe (Located String)
+        , functions : Dict String FunctionDecl
         }
+    | TraitDecl TraitDeclaration
+
+
+type alias TraitDeclaration =
+    { name : Located String
+    , functions : Dict String TraitFunctionDecl
+    }
+
+
+type alias TraitFunctionDecl =
+    FunctionHeader {}
 
 
 type alias FunctionDecl =
-    { name : Located String
-    , namespace : Maybe (Located String)
-    , parameters : List ( Located Pattern, Located Type )
-    , returnType : Located Type
-    , body : Located Block
+    FunctionHeader { body : Located Block }
+
+
+type alias FunctionHeader a =
+    { a
+        | name : Located String
+        , namespace : Namespace
+        , parameters : List ( Located Pattern, Located Type )
+        , returnType : Located Type
     }
+
+
+type Namespace
+    = ModuleNamespace
+    | StructNamespace (Located String) (Maybe (Located String))
+    | TraitNamespace (Located String)
 
 
 type alias Place =
@@ -135,8 +164,9 @@ type Type
         { name : Located String
         , fields : Dict String ( Located String, Located Type )
         }
-    | FunctionType FunctionDecl
+    | FunctionType (FunctionHeader {})
     | ArrayType
+    | SelfType
 
 
 type Pattern
@@ -195,6 +225,10 @@ type alias Path =
 
 type PathSegment
     = IdentifierSegment (Located String)
+    | QualifiedSegment
+        { struct : Located String
+        , trait : Located String
+        }
 
 
 type alias Block =
@@ -229,6 +263,7 @@ type Problem
     | ExpectingEndOfStruct
     | ExpectingVariableName
     | ExpectingStructName
+    | ExpectingTraitName
     | ExpectingWildcard
     | ExpectingStructField
     | ExpectingStartOfArrayAccess
@@ -251,6 +286,7 @@ reserved =
         , "else"
         , "while"
         , "mut"
+        , "Self"
         ]
 
 
@@ -290,6 +326,7 @@ decl =
         [ fnDecl
         , structDecl
         , implDecl
+        , traitDecl
         ]
 
 
@@ -330,18 +367,33 @@ structDecl =
 
 fnDecl : AntParser Decl
 fnDecl =
-    map FnDecl <| functionDecl Nothing
+    map FnDecl <| functionDecl ModuleNamespace
 
 
-functionDecl : Maybe (Located String) -> AntParser FunctionDecl
+functionDecl : Namespace -> AntParser FunctionDecl
 functionDecl namespace =
     succeed
-        (\name parameters returnType body ->
+        (\{ name, parameters, returnType } body ->
             { name = name
             , namespace = namespace
             , parameters = parameters
             , returnType = returnType
             , body = body
+            }
+        )
+        |= functionHeader namespace
+        |. sps
+        |= located block
+
+
+functionHeader : Namespace -> AntParser (FunctionHeader {})
+functionHeader namespace =
+    succeed
+        (\name parameters returnType ->
+            { name = name
+            , namespace = namespace
+            , parameters = parameters
+            , returnType = returnType
             }
         )
         |. keyword (Token "fn" <| ExpectingKeyword "fn")
@@ -366,24 +418,63 @@ functionDecl namespace =
         |. symbol (Token ":" <| ExpectingSymbol ":")
         |. sps
         |= located ty
+
+
+traitDecl : AntParser Decl
+traitDecl =
+    succeed identity
+        |. keyword (Token "trait" <| ExpectingKeyword "trait")
         |. sps
-        |= located block
+        |= tyName ExpectingTraitName
+        |. sps
+        |> andThen
+            (\name ->
+                succeed
+                    (\functions ->
+                        TraitDecl
+                            { name = name
+                            , functions =
+                                Dict.fromList <|
+                                    List.map (\function -> ( function.name.value, function ))
+                                        functions
+                            }
+                    )
+                    |= sequence
+                        { start = Token "{" <| ExpectingSymbol "{"
+                        , separator = Token ";" <| ExpectingSymbol ";"
+                        , end = Token "}" <| ExpectingSymbol "}"
+                        , spaces = sps
+                        , item = functionHeader (TraitNamespace name)
+                        , trailing = Optional
+                        }
+            )
 
 
 implDecl : AntParser Decl
 implDecl =
-    succeed identity
+    succeed Tuple.pair
         |. keyword (Token "impl" <| ExpectingKeyword "impl")
         |. sps
+        |= (optional <|
+                succeed identity
+                    |= tyName ExpectingTraitName
+                    |. sps
+                    |. keyword (Token "for" <| ExpectingKeyword "for")
+                    |. sps
+           )
         |= tyName ExpectingStructName
         |. sps
         |> andThen
-            (\target ->
+            (\( trait, target ) ->
                 succeed
                     (\functions ->
                         ImplDecl
                             { target = target
-                            , functions = functions
+                            , trait = trait
+                            , functions =
+                                Dict.fromList <|
+                                    List.map (\function -> ( function.name.value, function ))
+                                        functions
                             }
                     )
                     |= sequence
@@ -391,7 +482,7 @@ implDecl =
                         , separator = Token "" <| ExpectingSymbol ""
                         , end = Token "}" <| ExpectingSymbol "}"
                         , spaces = sps
-                        , item = functionDecl (Just target)
+                        , item = functionDecl (StructNamespace target trait)
                         , trailing = Optional
                         }
             )
@@ -404,6 +495,7 @@ ty =
         , map (\_ -> CharType) <| keyword (Token "Char" <| ExpectingType)
         , map (\_ -> StringType) <| keyword (Token "String" <| ExpectingType)
         , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
+        , map (\_ -> SelfType) <| keyword (Token "Self" <| ExpectingType)
         , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
         , map (\name -> NamedType name) <| tyName ExpectingType
         ]
@@ -537,7 +629,7 @@ subExpr =
                                             , to =
                                                 arguments.to
                                             , value =
-                                                CallExpr { caller = e2, arguments = arguments.value }
+                                                CallExpr { caller = e2, arguments = arguments }
                                             }
                                         )
                                         (located exprList)
@@ -625,8 +717,8 @@ pathExpr =
 
 pathSegment : AntParser PathSegment
 pathSegment =
-    oneOf
-        [ map IdentifierSegment <|
+    let
+        identifier =
             located <|
                 variable
                     { start = Char.isAlpha
@@ -634,6 +726,29 @@ pathSegment =
                     , reserved = reserved
                     , expecting = ExpectingPathSegment
                     }
+    in
+    oneOf
+        [ succeed
+            (\struct trait ->
+                QualifiedSegment
+                    { struct = struct
+                    , trait = trait
+                    }
+            )
+            |. symbol (Token "<" <| ExpectingSymbol "<")
+            |. sps
+            |= tyName ExpectingStructName
+            |. sps
+            |. keyword (Token "as" <| ExpectingKeyword "as")
+            |. sps
+            |= tyName ExpectingTraitName
+            |. sps
+            |. symbol (Token ">" <| ExpectingSymbol ">")
+        , succeed
+            (\id ->
+                IdentifierSegment id
+            )
+            |= identifier
         ]
 
 
@@ -947,7 +1062,7 @@ tyName expecting =
         variable
             { start = Char.isUpper
             , inner = Char.isAlphaNum
-            , reserved = Set.empty
+            , reserved = reserved
             , expecting = expecting
             }
 
@@ -1116,6 +1231,9 @@ showProblem p =
         ExpectingStructName ->
             "a struct name"
 
+        ExpectingTraitName ->
+            "a trait name"
+
         ExpectingWildcard ->
             "a wildcard '_'"
 
@@ -1234,16 +1352,39 @@ type CleanDecl
     | CFnDecl CFunctionDecl
     | CImplDecl
         { target : String
-        , functions : List CFunctionDecl
+        , functions : Dict String CFunctionDecl
+        }
+    | CTraitDecl
+        { name : String
+        , functions : Dict String CTraitFunctionDecl
         }
 
 
 type alias CFunctionDecl =
     { name : String
+    , namespace : CleanNamespace
     , parameters : List ( CleanPattern, CleanType )
     , returnType : CleanType
     , body : CleanBlock
     }
+
+
+type alias CTraitFunctionDecl =
+    CleanFunctionHeader
+
+
+type alias CleanFunctionHeader =
+    { name : String
+    , namespace : CleanNamespace
+    , parameters : List ( CleanPattern, CleanType )
+    , returnType : CleanType
+    }
+
+
+type CleanNamespace
+    = CModuleNamespace
+    | CStructNamespace String (Maybe String)
+    | CTraitNamespace String
 
 
 type alias CleanBlock =
@@ -1283,8 +1424,9 @@ type CleanType
         { name : String
         , fields : Dict String CleanType
         }
-    | CFunctionType CFunctionDecl
+    | CFunctionType CleanFunctionHeader
     | CArrayType
+    | CSelfType
 
 
 type alias CleanPlace =
@@ -1304,6 +1446,7 @@ type alias CleanPath =
 
 type CleanPathSegment
     = CIdentifierSegment String
+    | CQualifiedSegment { struct : String, trait : String }
 
 
 cleanExpr : Located Expr -> CleanExpr
@@ -1365,7 +1508,7 @@ cleanExpr e =
                 { caller =
                     cleanExpr caller
                 , arguments =
-                    cleanExprs arguments
+                    cleanExprs arguments.value
                 }
 
         PlaceExpr { target, accessor } ->
@@ -1439,10 +1582,13 @@ cleanType t =
                 }
 
         FunctionType f ->
-            CFunctionType <| cleanFunctionDecl f
+            CFunctionType <| cleanFunctionHeader f
 
         ArrayType ->
             CArrayType
+
+        SelfType ->
+            CSelfType
 
 
 cleanLiteral : Located Literal -> CleanLiteral
@@ -1478,6 +1624,9 @@ cleanPathSegment s =
     case s.value of
         IdentifierSegment name ->
             CIdentifierSegment name.value
+
+        QualifiedSegment { struct, trait } ->
+            CQualifiedSegment { struct = struct.value, trait = trait.value }
 
 
 cleanExprs : List (Located Expr) -> List CleanExpr
@@ -1560,13 +1709,46 @@ cleanDecl d =
             CImplDecl
                 { target = target.value
                 , functions =
-                    List.map cleanFunctionDecl functions
+                    Dict.map (\_ function -> cleanFunctionDecl function) functions
+                }
+
+        TraitDecl { name, functions } ->
+            CTraitDecl
+                { name = name.value
+                , functions =
+                    Dict.map (\_ function -> cleanTraitFunctionDecl function) functions
                 }
 
 
 cleanFunctionDecl : FunctionDecl -> CFunctionDecl
-cleanFunctionDecl { name, parameters, returnType, body } =
+cleanFunctionDecl { name, namespace, parameters, returnType, body } =
+    let
+        cleanHeader =
+            cleanFunctionHeader
+                { name = name
+                , namespace = namespace
+                , parameters = parameters
+                , returnType = returnType
+                }
+    in
+    { name = cleanHeader.name
+    , namespace = cleanHeader.namespace
+    , parameters = cleanHeader.parameters
+    , returnType = cleanHeader.returnType
+    , body =
+        cleanBlock body
+    }
+
+
+cleanTraitFunctionDecl : TraitFunctionDecl -> CTraitFunctionDecl
+cleanTraitFunctionDecl d =
+    cleanFunctionHeader d
+
+
+cleanFunctionHeader : FunctionHeader a -> CleanFunctionHeader
+cleanFunctionHeader { name, namespace, parameters, returnType } =
     { name = name.value
+    , namespace = cleanNamespace namespace
     , parameters =
         List.map
             (\( paramName, paramType ) ->
@@ -1574,6 +1756,17 @@ cleanFunctionDecl { name, parameters, returnType, body } =
             )
             parameters
     , returnType = cleanType returnType
-    , body =
-        cleanBlock body
     }
+
+
+cleanNamespace : Namespace -> CleanNamespace
+cleanNamespace namespace =
+    case namespace of
+        ModuleNamespace ->
+            CModuleNamespace
+
+        StructNamespace struct trait ->
+            CStructNamespace struct.value (Maybe.map .value trait)
+
+        TraitNamespace struct ->
+            CTraitNamespace struct.value

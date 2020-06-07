@@ -9,6 +9,7 @@ import AntParser
         , CleanDecl(..)
         , CleanExpr(..)
         , CleanLiteral(..)
+        , CleanNamespace(..)
         , CleanPathSegment(..)
         , CleanPattern(..)
         , CleanStmt(..)
@@ -789,6 +790,7 @@ testDecl =
                     (CFnDecl
                         { body = ( [], Nothing )
                         , name = "myFunc"
+                        , namespace = CModuleNamespace
                         , parameters = []
                         , returnType = CUnitType
                         }
@@ -816,6 +818,7 @@ testDecl =
                             , Just (CPathExpr ( CIdentifierSegment "b", [] ))
                             )
                         , name = "myFunc"
+                        , namespace = CModuleNamespace
                         , parameters =
                             [ ( CIdentifierPattern { mutable = False, name = "a" }
                               , CIntType
@@ -839,24 +842,28 @@ testDecl =
                 Ok
                     (CImplDecl
                         { functions =
-                            [ { body =
-                                    ( []
-                                    , Just
-                                        (CPlaceExpr
-                                            { accessor = CStructAccess "a"
-                                            , target = CPathExpr ( CIdentifierSegment "self", [] )
-                                            }
+                            Dict.fromList
+                                [ ( "getA"
+                                  , { body =
+                                        ( []
+                                        , Just
+                                            (CPlaceExpr
+                                                { accessor = CStructAccess "a"
+                                                , target = CPathExpr ( CIdentifierSegment "self", [] )
+                                                }
+                                            )
                                         )
-                                    )
-                              , name = "getA"
-                              , parameters =
-                                    [ ( CIdentifierPattern { mutable = False, name = "self" }
-                                      , CNamedType "MyStruct"
-                                      )
-                                    ]
-                              , returnType = CIntType
-                              }
-                            ]
+                                    , name = "getA"
+                                    , namespace = CStructNamespace "MyStruct" Nothing
+                                    , parameters =
+                                        [ ( CIdentifierPattern { mutable = False, name = "self" }
+                                          , CNamedType "MyStruct"
+                                          )
+                                        ]
+                                    , returnType = CIntType
+                                    }
+                                  )
+                                ]
                         , target = "MyStruct"
                         }
                     )
@@ -870,12 +877,16 @@ testDecl =
                 Ok
                     (CImplDecl
                         { functions =
-                            [ { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
-                              , name = "bar"
-                              , parameters = []
-                              , returnType = CStringType
-                              }
-                            ]
+                            Dict.fromList
+                                [ ( "bar"
+                                  , { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
+                                    , name = "bar"
+                                    , namespace = CStructNamespace "MyStruct" Nothing
+                                    , parameters = []
+                                    , returnType = CStringType
+                                    }
+                                  )
+                                ]
                         , target = "MyStruct"
                         }
                     )
@@ -892,29 +903,36 @@ testDecl =
                 Ok
                     (CImplDecl
                         { functions =
-                            [ { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
-                              , name = "bar"
-                              , parameters = []
-                              , returnType = CStringType
-                              }
-                            , { body =
-                                    ( []
-                                    , Just
-                                        (CPlaceExpr
-                                            { accessor = CStructAccess "a"
-                                            , target = CPathExpr ( CIdentifierSegment "self", [] )
-                                            }
+                            Dict.fromList
+                                [ ( "bar"
+                                  , { body = ( [], Just (CLiteralExpr (CStringLiteral "MyStruct.bar() was called")) )
+                                    , name = "bar"
+                                    , parameters = []
+                                    , returnType = CStringType
+                                    , namespace = CStructNamespace "MyStruct" Nothing
+                                    }
+                                  )
+                                , ( "getA"
+                                  , { body =
+                                        ( []
+                                        , Just
+                                            (CPlaceExpr
+                                                { accessor = CStructAccess "a"
+                                                , target = CPathExpr ( CIdentifierSegment "self", [] )
+                                                }
+                                            )
                                         )
-                                    )
-                              , name = "getA"
-                              , parameters =
-                                    [ ( CIdentifierPattern { mutable = False, name = "self" }
-                                      , CNamedType "MyStruct"
-                                      )
-                                    ]
-                              , returnType = CIntType
-                              }
-                            ]
+                                    , name = "getA"
+                                    , namespace = CStructNamespace "MyStruct" Nothing
+                                    , parameters =
+                                        [ ( CIdentifierPattern { mutable = False, name = "self" }
+                                          , CNamedType "MyStruct"
+                                          )
+                                        ]
+                                    , returnType = CIntType
+                                    }
+                                  )
+                                ]
                         , target = "MyStruct"
                         }
                     )
