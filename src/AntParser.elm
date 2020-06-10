@@ -20,6 +20,7 @@ module AntParser exposing
     , Expr(..)
     , FunctionDecl
     , FunctionHeader
+    , Generics
     , Literal(..)
     , Namespace(..)
     , Path
@@ -47,7 +48,7 @@ module AntParser exposing
 import Dict exposing (Dict)
 import Html.Attributes exposing (id)
 import List.Extra
-import Location exposing (Located, dummyLocated, showProblemLocation)
+import Location exposing (Located, dummyLocated, showProblemLocation, withLocation)
 import Parser.Advanced exposing (..)
 import Pratt.Advanced as Pratt
 import Set exposing (Set)
@@ -107,11 +108,13 @@ type Stmt
 type Decl
     = StructDecl
         { name : Located String
+        , generics : Generics
         , fields : Dict String ( Located String, Located Type )
         }
     | FnDecl FunctionDecl
     | ImplDecl
         { target : Located String
+        , generics : Generics
         , trait : Maybe (Located String)
         , functions : Dict String FunctionDecl
         }
@@ -136,15 +139,21 @@ type alias FunctionHeader a =
     { a
         | name : Located String
         , namespace : Namespace
+        , generics : Generics
         , parameters : List ( Located Pattern, Located Type )
         , returnType : Located Type
     }
+
+
+type alias Generics =
+    Located (List ( Located String, Dict String (Located String) ))
 
 
 type Namespace
     = ModuleNamespace
     | StructNamespace (Located String) (Maybe (Located String))
     | TraitNamespace (Located String)
+    | GenericStructNamespace (Located String) (Located (List (Located Type)))
 
 
 type alias Place =
@@ -159,14 +168,16 @@ type Type
     | CharType
     | StringType
     | UnitType
-    | NamedType (Located String)
+    | NamedType (Located String) (Located (List (Located Type)))
     | StructType
         { name : Located String
+        , generics : Generics
         , fields : Dict String ( Located String, Located Type )
         }
     | FunctionType (FunctionHeader {})
     | ArrayType
     | SelfType
+    | GenericType (Located String) (Dict String (Located String))
 
 
 type Pattern
@@ -187,6 +198,7 @@ type Literal
     | BoolLiteral Bool
     | StructLiteral
         { name : Located String
+        , generics : Located (List (Located Type))
         , fields : Dict String ( Located String, Located Expr )
         }
 
@@ -229,6 +241,7 @@ type PathSegment
         { struct : Located String
         , trait : Located String
         }
+    | GenericsSegment (Located String) (Located (List (Located Type)))
 
 
 type alias Block =
@@ -264,6 +277,7 @@ type Problem
     | ExpectingVariableName
     | ExpectingStructName
     | ExpectingTraitName
+    | ExpectingGenericType
     | ExpectingWildcard
     | ExpectingStructField
     | ExpectingStartOfArrayAccess
@@ -333,9 +347,10 @@ decl =
 structDecl : AntParser Decl
 structDecl =
     succeed
-        (\name fields ->
+        (\name generics fields ->
             StructDecl
                 { name = name
+                , generics = generics
                 , fields =
                     Dict.fromList <|
                         List.map
@@ -348,6 +363,8 @@ structDecl =
         |. keyword (Token "struct" <| ExpectingKeyword "struct")
         |. sps
         |= tyName ExpectingStructName
+        |. sps
+        |= parseGenerics
         |. sps
         |= sequence
             { start = Token "{" ExpectingStartOfStruct
@@ -373,9 +390,10 @@ fnDecl =
 functionDecl : Namespace -> AntParser FunctionDecl
 functionDecl namespace =
     succeed
-        (\{ name, parameters, returnType } body ->
+        (\{ name, generics, parameters, returnType } body ->
             { name = name
             , namespace = namespace
+            , generics = generics
             , parameters = parameters
             , returnType = returnType
             , body = body
@@ -389,8 +407,9 @@ functionDecl namespace =
 functionHeader : Namespace -> AntParser (FunctionHeader {})
 functionHeader namespace =
     succeed
-        (\name parameters returnType ->
+        (\name generics parameters returnType ->
             { name = name
+            , generics = generics
             , namespace = namespace
             , parameters = parameters
             , returnType = returnType
@@ -399,6 +418,8 @@ functionHeader namespace =
         |. keyword (Token "fn" <| ExpectingKeyword "fn")
         |. sps
         |= varName ExpectingFunctionName
+        |. sps
+        |= parseGenerics
         |. sps
         |= sequence
             { start = Token "(" <| ExpectingSymbol "("
@@ -418,6 +439,47 @@ functionHeader namespace =
         |. symbol (Token ":" <| ExpectingSymbol ":")
         |. sps
         |= located ty
+
+
+parseGenerics : AntParser Generics
+parseGenerics =
+    located <|
+        optionalWithDefault [] <|
+            sequence
+                { start = Token "<" <| ExpectingSymbol "<"
+                , separator = Token "," <| ExpectingSymbol ","
+                , end = Token ">" <| ExpectingSymbol ">"
+                , spaces = sps
+                , item =
+                    succeed Tuple.pair
+                        |= tyName ExpectingGenericType
+                        |= (optionalWithDefault Dict.empty <|
+                                succeed identity
+                                    |. sps
+                                    |. symbol (Token ":" <| ExpectingSymbol ":")
+                                    |. sps
+                                    |= (map
+                                            (\traitList ->
+                                                List.foldl
+                                                    (\trait traitDict ->
+                                                        Dict.insert trait.value trait traitDict
+                                                    )
+                                                    Dict.empty
+                                                    traitList
+                                            )
+                                        <|
+                                            sequence
+                                                { start = Token "" <| ExpectingSymbol ""
+                                                , separator = Token "+" <| ExpectingSymbol "+"
+                                                , end = Token "" <| ExpectingSymbol ""
+                                                , spaces = sps
+                                                , item = tyName ExpectingTraitName
+                                                , trailing = Forbidden
+                                                }
+                                       )
+                           )
+                , trailing = Optional
+                }
 
 
 traitDecl : AntParser Decl
@@ -452,7 +514,7 @@ traitDecl =
 
 implDecl : AntParser Decl
 implDecl =
-    succeed Tuple.pair
+    succeed (\trait target generics -> ( trait, target, generics ))
         |. keyword (Token "impl" <| ExpectingKeyword "impl")
         |. sps
         |= (optional <|
@@ -464,12 +526,15 @@ implDecl =
            )
         |= tyName ExpectingStructName
         |. sps
+        |= parseGenerics
+        |. sps
         |> andThen
-            (\( trait, target ) ->
+            (\( trait, target, generics ) ->
                 succeed
                     (\functions ->
                         ImplDecl
                             { target = target
+                            , generics = generics
                             , trait = trait
                             , functions =
                                 Dict.fromList <|
@@ -497,7 +562,25 @@ ty =
         , map (\_ -> BoolType) <| keyword (Token "Bool" <| ExpectingType)
         , map (\_ -> SelfType) <| keyword (Token "Self" <| ExpectingType)
         , map (\_ -> UnitType) <| symbol (Token "()" <| ExpectingType)
-        , map (\name -> NamedType name) <| tyName ExpectingType
+        , succeed
+            (\name generics ->
+                NamedType
+                    name
+                    (Maybe.withDefault { from = name.to, to = Tuple.mapSecond ((+) 1) name.to, value = [] } <| generics)
+            )
+            |= tyName ExpectingType
+            |. sps
+            |= (optional <|
+                    located <|
+                        sequence
+                            { start = Token "<" <| ExpectingSymbol "<"
+                            , separator = Token "," <| ExpectingSymbol ","
+                            , end = Token ">" <| ExpectingSymbol ">"
+                            , spaces = sps
+                            , item = lazy (\_ -> located ty)
+                            , trailing = Optional
+                            }
+               )
         ]
 
 
@@ -735,15 +818,31 @@ pathSegment =
                     , trait = trait
                     }
             )
-            |. symbol (Token "<" <| ExpectingSymbol "<")
-            |. sps
-            |= tyName ExpectingStructName
-            |. sps
+            |. (backtrackable <| symbol (Token "<" <| ExpectingSymbol "<"))
+            |. backtrackable sps
+            |= (backtrackable <| tyName ExpectingStructName)
+            |. backtrackable sps
             |. keyword (Token "as" <| ExpectingKeyword "as")
             |. sps
             |= tyName ExpectingTraitName
             |. sps
             |. symbol (Token ">" <| ExpectingSymbol ">")
+        , succeed
+            (\name genericTypes ->
+                GenericsSegment name genericTypes
+            )
+            |= (backtrackable <| tyName ExpectingStructName)
+            |. (backtrackable <| symbol (Token "::" <| ExpectingSymbol "::"))
+            |= (located <|
+                    sequence
+                        { start = Token "<" <| ExpectingSymbol "<"
+                        , separator = Token "," <| ExpectingSymbol ","
+                        , end = Token ">" <| ExpectingSymbol ">"
+                        , spaces = sps
+                        , item = located ty
+                        , trailing = Optional
+                        }
+               )
         , succeed
             (\id ->
                 IdentifierSegment id
@@ -823,10 +922,12 @@ literalExpr =
                     ]
                 , map IntLiteral integer
                 , succeed
-                    (\name fields ->
+                    (\name generics fields ->
                         StructLiteral
                             { name =
                                 name
+                            , generics =
+                                Maybe.withDefault { from = name.to, to = Tuple.mapSecond ((+) 1) name.to, value = [] } <| generics
                             , fields =
                                 Dict.fromList <|
                                     List.map
@@ -837,6 +938,21 @@ literalExpr =
                             }
                     )
                     |= (backtrackable <| tyName ExpectingStructName)
+                    |= (backtrackable <|
+                            optional <|
+                                succeed identity
+                                    |. symbol (Token "::" <| ExpectingSymbol "::")
+                                    |= (located <|
+                                            sequence
+                                                { start = Token "<" <| ExpectingSymbol "<"
+                                                , separator = Token "," <| ExpectingSymbol ","
+                                                , end = Token ">" <| ExpectingSymbol ">"
+                                                , spaces = sps
+                                                , item = located ty
+                                                , trailing = Optional
+                                                }
+                                       )
+                       )
                     |. backtrackable sps
                     |= sequence
                         { start = Token "{" ExpectingStartOfStruct
@@ -1234,6 +1350,9 @@ showProblem p =
         ExpectingTraitName ->
             "a trait name"
 
+        ExpectingGenericType ->
+            "a generic type"
+
         ExpectingWildcard ->
             "a wildcard '_'"
 
@@ -1376,6 +1495,7 @@ type alias CTraitFunctionDecl =
 type alias CleanFunctionHeader =
     { name : String
     , namespace : CleanNamespace
+    , generics : CleanGenerics
     , parameters : List ( CleanPattern, CleanType )
     , returnType : CleanType
     }
@@ -1385,6 +1505,11 @@ type CleanNamespace
     = CModuleNamespace
     | CStructNamespace String (Maybe String)
     | CTraitNamespace String
+    | CGenericStructNamespace String (List CleanType)
+
+
+type alias CleanGenerics =
+    List ( String, List String )
 
 
 type alias CleanBlock =
@@ -1419,7 +1544,7 @@ type CleanType
     | CCharType
     | CStringType
     | CUnitType
-    | CNamedType String
+    | CNamedType String (List CleanType)
     | CStructType
         { name : String
         , fields : Dict String CleanType
@@ -1427,6 +1552,7 @@ type CleanType
     | CFunctionType CleanFunctionHeader
     | CArrayType
     | CSelfType
+    | CGenericType String (List String)
 
 
 type alias CleanPlace =
@@ -1447,6 +1573,7 @@ type alias CleanPath =
 type CleanPathSegment
     = CIdentifierSegment String
     | CQualifiedSegment { struct : String, trait : String }
+    | CGenericsSegment String (List CleanType)
 
 
 cleanExpr : Located Expr -> CleanExpr
@@ -1566,8 +1693,8 @@ cleanType t =
         UnitType ->
             CUnitType
 
-        NamedType name ->
-            CNamedType name.value
+        NamedType name generics ->
+            CNamedType name.value (List.map cleanType generics.value)
 
         StructType { name, fields } ->
             CStructType
@@ -1589,6 +1716,9 @@ cleanType t =
 
         SelfType ->
             CSelfType
+
+        GenericType name traits ->
+            CGenericType name.value (Dict.keys traits)
 
 
 cleanLiteral : Located Literal -> CleanLiteral
@@ -1627,6 +1757,9 @@ cleanPathSegment s =
 
         QualifiedSegment { struct, trait } ->
             CQualifiedSegment { struct = struct.value, trait = trait.value }
+
+        GenericsSegment name genericTypes ->
+            CGenericsSegment name.value (List.map cleanType genericTypes.value)
 
 
 cleanExprs : List (Located Expr) -> List CleanExpr
@@ -1721,12 +1854,13 @@ cleanDecl d =
 
 
 cleanFunctionDecl : FunctionDecl -> CFunctionDecl
-cleanFunctionDecl { name, namespace, parameters, returnType, body } =
+cleanFunctionDecl { name, namespace, generics, parameters, returnType, body } =
     let
         cleanHeader =
             cleanFunctionHeader
                 { name = name
                 , namespace = namespace
+                , generics = generics
                 , parameters = parameters
                 , returnType = returnType
                 }
@@ -1746,9 +1880,15 @@ cleanTraitFunctionDecl d =
 
 
 cleanFunctionHeader : FunctionHeader a -> CleanFunctionHeader
-cleanFunctionHeader { name, namespace, parameters, returnType } =
+cleanFunctionHeader { name, namespace, generics, parameters, returnType } =
     { name = name.value
     , namespace = cleanNamespace namespace
+    , generics =
+        List.map
+            (\( genericName, traits ) ->
+                ( genericName.value, Dict.keys traits )
+            )
+            generics.value
     , parameters =
         List.map
             (\( paramName, paramType ) ->
@@ -1770,3 +1910,6 @@ cleanNamespace namespace =
 
         TraitNamespace struct ->
             CTraitNamespace struct.value
+
+        GenericStructNamespace struct genericTypes ->
+            CGenericStructNamespace struct.value (List.map cleanType genericTypes.value)

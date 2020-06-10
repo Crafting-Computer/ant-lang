@@ -10,6 +10,7 @@ import AntParser
         , Expr(..)
         , FunctionDecl
         , FunctionHeader
+        , Generics
         , Literal(..)
         , Namespace(..)
         , PathSegment(..)
@@ -52,7 +53,11 @@ type Problem
     | ExtraPathSegments (List (Located PathSegment))
     | ExtraArguments (List (Located Expr))
     | MissingArguments (List ( Located Pattern, Located Type )) (Located (List (Located Expr)))
+    | MissingGenerics (List ( Located String, Dict String (Located String) )) (Located (List (Located Type)))
+    | MissingTraits (List (Located String)) (Located Type)
+    | ExtraGenerics (List (Located Type))
     | UnexpectedTraitInPathSegment (Located String)
+    | UnexpectedGenericTypesInPathSegment (Located String) (Located (List (Located Type)))
 
 
 checkDecls : List Decl -> Result (List Problem) ()
@@ -62,7 +67,7 @@ checkDecls decls =
             List.foldl
                 (\d ( ps, { declaredTypes } as ds1 ) ->
                     case d of
-                        StructDecl { name, fields } ->
+                        StructDecl ({ name } as struct) ->
                             let
                                 next =
                                     ( ps
@@ -70,7 +75,7 @@ checkDecls decls =
                                         | declaredTypes =
                                             Dict.insert
                                                 name.value
-                                                (withLocation name <| StructType { name = name, fields = fields })
+                                                (withLocation name <| StructType struct)
                                                 ds1.declaredTypes
                                       }
                                     )
@@ -89,47 +94,88 @@ checkDecls decls =
                                 Nothing ->
                                     next
 
-                        FnDecl ({ namespace, name } as functionDecl) ->
-                            case getFunction name.value namespace ds1 of
+                        FnDecl ({ namespace, generics, name } as functionDecl) ->
+                            let
+                                ds2 =
+                                    addGenericTypes generics ds1
+                            in
+                            case getFunction name.value namespace ds2 of
                                 Just prevFunction ->
                                     ( DuplicatedFunctionDecl prevFunction.name name :: ps
-                                    , ds1
+                                    , ds2
                                     )
 
                                 Nothing ->
                                     ( ps
-                                    , addFunction (substituteNamedTypeInFunctionHeader ds1 functionDecl) ds1
+                                    , addFunction (substituteNamedTypeInFunctionHeader ds2 functionDecl) ds2
                                     )
 
-                        ImplDecl { target, functions } ->
-                            Dict.foldl
-                                (\_ functionDecl ( ps2, ds2 ) ->
-                                    let
-                                        next =
-                                            ( ps2
-                                            , addFunction
-                                                (substituteNamedTypeInFunctionHeader ds2 <|
-                                                    substituteSelfTypeInFunctionHeader (withLocation target <| NamedType target) <|
-                                                        functionDecl
-                                                )
-                                                ds2
-                                            )
-                                    in
-                                    case getFunction functionDecl.name.value functionDecl.namespace ds2 of
-                                        Just prevFunction ->
-                                            if areEqualNamespaces functionDecl.namespace prevFunction.namespace then
-                                                ( DuplicatedFunctionDecl prevFunction.name functionDecl.name :: ps2
-                                                , ds2
-                                                )
+                        ImplDecl { target, generics, trait, functions } ->
+                            (\( ps3, ds3 ) ->
+                                case trait of
+                                    Nothing ->
+                                        ( ps3, ds3 )
 
-                                            else
+                                    Just t ->
+                                        ( ps3
+                                        , { ds3
+                                            | implementedTraits =
+                                                case Dict.get target.value ds3.implementedTraits of
+                                                    Just traits ->
+                                                        Dict.insert
+                                                            target.value
+                                                            (t.value :: traits)
+                                                            ds3.implementedTraits
+
+                                                    Nothing ->
+                                                        Dict.insert
+                                                            target.value
+                                                            [ t.value ]
+                                                            ds3.implementedTraits
+                                          }
+                                        )
+                            )
+                            <|
+                                let
+                                    genericTypes =
+                                        genericsToGenericTypes generics
+
+                                    ds2 =
+                                        addGenericTypes generics ds1
+                                in
+                                Dict.foldl
+                                    (\_ functionDecl ( ps2, ds4 ) ->
+                                        let
+                                            next =
+                                                ( ps2
+                                                , addFunction
+                                                    (substituteNamedTypeInFunctionHeader ds4 <|
+                                                        substituteSelfTypeInFunctionHeader
+                                                            (withLocation target <|
+                                                                NamedType target <|
+                                                                    genericTypes
+                                                            )
+                                                        <|
+                                                            functionDecl
+                                                    )
+                                                    ds4
+                                                )
+                                        in
+                                        case getFunction functionDecl.name.value functionDecl.namespace ds4 of
+                                            Just prevFunction ->
+                                                if areEqualNamespaces functionDecl.namespace prevFunction.namespace then
+                                                    ( DuplicatedFunctionDecl prevFunction.name functionDecl.name :: ps2
+                                                    , ds4
+                                                    )
+
+                                                else
+                                                    next
+
+                                            Nothing ->
                                                 next
-
-                                        Nothing ->
-                                            next
-                                )
-                                ( [], ds1 )
-                                functions
+                                    )
+                                    ( [], ds2 )
+                                    functions
 
                         TraitDecl { name, functions } ->
                             case getTrait name.value ds1 of
@@ -176,6 +222,7 @@ checkDecls decls =
                   , declaredFunctions = AllDict.empty
                   , declaredVariables = Dict.empty
                   , declaredTraits = Dict.empty
+                  , implementedTraits = Dict.empty
                   }
                 )
                 decls
@@ -191,11 +238,22 @@ checkDecls decls =
             Err ps
 
 
+genericsToGenericTypes : Generics -> Located (List (Located Type))
+genericsToGenericTypes generics =
+    withLocation generics <|
+        List.map
+            (\( name, traits ) ->
+                withLocation name <| GenericType name traits
+            )
+            generics.value
+
+
 type alias Declarations =
     { declaredTypes : Dict String (Located Type)
     , declaredFunctions : AllDict.Dict CleanNamespace (Dict String FunctionDecl)
     , declaredTraits : Dict String TraitDeclaration
     , declaredVariables : Dict String ( Variable, Located Type )
+    , implementedTraits : Dict String (List String)
     }
 
 
@@ -206,7 +264,7 @@ checkDecl ds d =
             Dict.foldl
                 (\_ ( fieldName, fieldType ) ps ->
                     case fieldType.value of
-                        NamedType fieldTypeName ->
+                        NamedType fieldTypeName _ ->
                             if not <| Dict.member fieldTypeName.value ds.declaredTypes then
                                 UndefinedNamedType fieldTypeName :: ps
 
@@ -330,8 +388,11 @@ checkFunctionHeader ds f =
 checkFunctionDecl : Declarations -> FunctionDecl -> List Problem
 checkFunctionDecl ds functionDecl =
     let
-        { name, parameters, returnType, body } =
+        { name, generics, parameters, returnType, body } =
             functionDecl
+
+        ds0 =
+            addGenericTypes generics ds
 
         ( ps3, ds2 ) =
             List.foldl
@@ -364,7 +425,7 @@ checkFunctionDecl ds functionDecl =
                                 Err ps2 ->
                                     ( ps2, ds1 )
                 )
-                ( [], ds )
+                ( [], ds0 )
                 parameters
 
         -- add this function as variable to allow recursive calls in function body
@@ -401,16 +462,179 @@ substituteNamedType :
     -> Result (List Problem) (Located Type)
 substituteNamedType ds ps ty =
     case ty.value of
-        NamedType typeName ->
+        NamedType typeName genericTypes ->
             case getType typeName.value ds of
                 Just substType ->
-                    Ok <| changeLocation ty <| substType
+                    case substType.value of
+                        StructType structType ->
+                            Result.map (withLocation ty) <|
+                                substituteGenericsInStructType ds genericTypes structType
+
+                        _ ->
+                            if List.length genericTypes.value > 0 then
+                                Err <| ExtraGenerics genericTypes.value :: ps
+
+                            else
+                                Ok <| changeLocation ty <| substType
 
                 Nothing ->
                     Err <| UndefinedNamedType typeName :: ps
 
+        StructType structType ->
+            Result.map
+                (\fields ->
+                    withLocation ty <|
+                        StructType
+                            { structType
+                                | fields =
+                                    fields
+                            }
+                )
+            <|
+                Dict.foldl
+                    (\_ ( fieldName, fieldType ) result ->
+                        case result of
+                            Err _ ->
+                                result
+
+                            Ok fields ->
+                                substituteNamedType ds ps fieldType
+                                    |> Result.map
+                                        (\newFieldType ->
+                                            Dict.insert
+                                                fieldName.value
+                                                ( fieldName
+                                                , newFieldType
+                                                )
+                                                fields
+                                        )
+                    )
+                    (Ok Dict.empty)
+                    structType.fields
+
         _ ->
             Ok ty
+
+
+substituteGenericsInStructType :
+    Declarations
+    -> Located (List (Located Type))
+    ->
+        { name : Located String
+        , generics : Generics
+        , fields : Dict String ( Located String, Located Type )
+        }
+    -> Result (List Problem) Type
+substituteGenericsInStructType ds substTypes structType =
+    let
+        { generics, fields } =
+            structType
+
+        ps =
+            checkSubstTypesForGenerics ds generics substTypes
+    in
+    case ps of
+        [] ->
+            let
+                ds2 =
+                    List.foldl
+                        (\( generic, substType ) ds1 ->
+                            let
+                                genericName =
+                                    Tuple.first generic
+                            in
+                            { ds1
+                                | declaredTypes =
+                                    Dict.insert
+                                        genericName.value
+                                        substType
+                                        ds1.declaredTypes
+                            }
+                        )
+                        ds
+                        (List.map2 Tuple.pair generics.value substTypes.value)
+            in
+            Ok <|
+                StructType
+                    { structType
+                        | fields =
+                            Dict.map
+                                (\_ ( fieldName, fieldType ) ->
+                                    ( fieldName
+                                    , Result.withDefault fieldType <|
+                                        substituteNamedType ds2 [] fieldType
+                                    )
+                                )
+                                fields
+                    }
+
+        _ ->
+            Err ps
+
+
+checkSubstTypesForGenerics : Declarations -> Generics -> Located (List (Located Type)) -> List Problem
+checkSubstTypesForGenerics ds generics substTypes =
+    let
+        unspecifiedGenerics =
+            List.drop (List.length substTypes.value) generics.value
+    in
+    if List.isEmpty unspecifiedGenerics then
+        let
+            extraGenericTypes =
+                List.drop (List.length generics.value) substTypes.value
+        in
+        if List.isEmpty extraGenericTypes then
+            List.foldl
+                (\( generic, substType1 ) ps1 ->
+                    case substituteNamedType ds ps1 substType1 of
+                        Err ps2 ->
+                            ps2 ++ ps1
+
+                        Ok substType2 ->
+                            let
+                                implementedTraits =
+                                    getImplementedTraits ds substType2
+
+                                expectedTraits =
+                                    Dict.values <| Tuple.second generic
+                            in
+                            List.foldl
+                                (\expectedTrait missingTraits ->
+                                    if List.member expectedTrait.value implementedTraits then
+                                        missingTraits
+
+                                    else
+                                        expectedTrait :: missingTraits
+                                )
+                                []
+                                expectedTraits
+                                |> (\missingTraits ->
+                                        MissingTraits missingTraits substType2 :: ps1
+                                   )
+                )
+                []
+                (List.map2 Tuple.pair generics.value substTypes.value)
+
+        else
+            [ ExtraGenerics extraGenericTypes ]
+
+    else
+        [ MissingGenerics unspecifiedGenerics substTypes ]
+
+
+getImplementedTraits : Declarations -> Located Type -> List String
+getImplementedTraits ds ty =
+    case ty.value of
+        StructType { name } ->
+            case Dict.get name.value ds.implementedTraits of
+                Just traits ->
+                    traits
+
+                Nothing ->
+                    []
+
+        _ ->
+            []
 
 
 substituteSelfTypeInFunctionHeader :
@@ -486,9 +710,10 @@ substituteNamedTypeInFunctionHeader ds header =
 
 
 getHeaderFromFunctionDecl : FunctionDecl -> FunctionHeader {}
-getHeaderFromFunctionDecl { name, namespace, parameters, returnType } =
+getHeaderFromFunctionDecl { name, namespace, generics, parameters, returnType } =
     { name = name
     , namespace = namespace
+    , generics = generics
     , parameters = parameters
     , returnType = returnType
     }
@@ -734,7 +959,7 @@ getTypeFromExpr ds e =
                     BoolLiteral _ ->
                         primitive BoolType
 
-                    StructLiteral { name, fields } ->
+                    StructLiteral { name, generics, fields } ->
                         case getType name.value ds of
                             Just ty ->
                                 case ty.value of
@@ -744,14 +969,19 @@ getTypeFromExpr ds e =
                                                 Dict.diff structType.fields fields
                                         in
                                         if Dict.isEmpty unimplementedFields then
-                                            Result.map
+                                            Result.andThen
                                                 (\( fields2, ds3 ) ->
-                                                    ( StructType
+                                                    substituteGenericsInStructType
+                                                        ds3
+                                                        generics
                                                         { name = name
+                                                        , generics = structType.generics
                                                         , fields = fields2
                                                         }
-                                                    , ds3
-                                                    )
+                                                        |> Result.map
+                                                            (\substType ->
+                                                                ( substType, ds3 )
+                                                            )
                                                 )
                                             <|
                                                 Dict.foldl
@@ -916,6 +1146,9 @@ getTypeFromExpr ds e =
                             QualifiedSegment { trait } ->
                                 Err [ UnexpectedTraitInPathSegment trait ]
 
+                            GenericsSegment name genericTypes ->
+                                Err [ UnexpectedGenericTypesInPathSegment name genericTypes ]
+
                     secondSegment :: thirdOnwardSegments ->
                         case thirdOnwardSegments of
                             [] ->
@@ -927,6 +1160,9 @@ getTypeFromExpr ds e =
 
                                             QualifiedSegment { struct, trait } ->
                                                 StructNamespace struct (Just trait)
+
+                                            GenericsSegment name genericTypes ->
+                                                GenericStructNamespace name genericTypes
                                 in
                                 case getNamespace namespace ds of
                                     Just functions ->
@@ -945,6 +1181,26 @@ getTypeFromExpr ds e =
                                             QualifiedSegment { trait } ->
                                                 Err [ UnexpectedTraitInPathSegment trait ]
 
+                                            GenericsSegment functionName substTypes ->
+                                                case Dict.get functionName.value functions of
+                                                    Just function ->
+                                                        let
+                                                            functionHeader =
+                                                                getHeaderFromFunctionDecl <| function
+                                                        in
+                                                        case substituteGenericTypesInFunctionHeader ds substTypes functionHeader of
+                                                            Ok substHeader ->
+                                                                Ok
+                                                                    ( FunctionType substHeader
+                                                                    , ds
+                                                                    )
+
+                                                            Err ps ->
+                                                                Err ps
+
+                                                    Nothing ->
+                                                        Err [ UndefinedFunction functionName ]
+
                                     Nothing ->
                                         Err [ UndefinedNamespace namespace ]
 
@@ -955,6 +1211,67 @@ getTypeFromExpr ds e =
                 Result.map (Tuple.mapFirst .value) <|
                     getTypeFromBlock ds <|
                         dummyLocated block
+
+
+substituteGenericTypesInFunctionHeader :
+    Declarations
+    -> Located (List (Located Type))
+    -> FunctionHeader {}
+    -> Result (List Problem) (FunctionHeader {})
+substituteGenericTypesInFunctionHeader ds substTypes header =
+    let
+        substitute ty =
+            List.foldl
+                (\( ( genericName, _ ), substType ) ty1 ->
+                    substituteGenericTypes genericName.value substType ty1
+                )
+                ty
+                (List.map2 Tuple.pair header.generics.value substTypes.value)
+    in
+    case checkSubstTypesForGenerics ds header.generics substTypes of
+        [] ->
+            Ok <|
+                { header
+                    | parameters =
+                        List.map
+                            (\( paramName, paramType ) ->
+                                ( paramName, substitute paramType )
+                            )
+                            header.parameters
+                    , returnType =
+                        substitute header.returnType
+                }
+
+        ps ->
+            Err ps
+
+
+substituteGenericTypes : String -> Located Type -> Located Type -> Located Type
+substituteGenericTypes genericName substType ty =
+    case ty.value of
+        GenericType name _ ->
+            if name.value == genericName then
+                changeLocation ty substType
+
+            else
+                ty
+
+        StructType ({ fields } as structType) ->
+            withLocation ty <|
+                StructType
+                    { structType
+                        | fields =
+                            Dict.map
+                                (\_ ( fieldName, fieldType ) ->
+                                    ( fieldName
+                                    , substituteGenericTypes genericName substType fieldType
+                                    )
+                                )
+                                fields
+                    }
+
+        _ ->
+            ty
 
 
 getTypeFromBinaryInt : Declarations -> Located Expr -> Located Expr -> Type -> Result (List Problem) ( Type, Declarations )
@@ -1037,6 +1354,9 @@ areEqualTypes t1 t2 =
                     (List.map2 Tuple.pair f1.parameters f2.parameters)
                 && areEqualTypes f1.returnType f2.returnType
 
+        ( GenericType n1 _, GenericType n2 _ ) ->
+            n1.value == n2.value
+
         _ ->
             False
 
@@ -1069,6 +1389,26 @@ addVariable variable ty ds =
     { ds
         | declaredVariables =
             Dict.insert variable.name.value ( variable, ty ) ds.declaredVariables
+    }
+
+
+addGenericTypes : Generics -> Declarations -> Declarations
+addGenericTypes generics ds =
+    let
+        newDeclaredTypes =
+            List.foldl
+                (\( name, traits ) declaredTypes ->
+                    Dict.insert
+                        name.value
+                        (withLocation name <| GenericType name traits)
+                        declaredTypes
+                )
+                ds.declaredTypes
+                generics.value
+    in
+    { ds
+        | declaredTypes =
+            newDeclaredTypes
     }
 
 
@@ -1170,6 +1510,13 @@ showProblem src p =
 
                             TraitNamespace trait ->
                                 trait
+
+                            GenericStructNamespace name types ->
+                                withLocation name <|
+                                    name.value
+                                        ++ "<"
+                                        ++ (String.join ", " <| List.map showType types.value)
+                                        ++ ">"
                 in
                 showUndefinedProblem "namespace" n src
 
@@ -1317,6 +1664,32 @@ showProblem src p =
                 , "   In the second path segment, we specify the method 'show' in the trait 'Display'."
                 ]
 
+            MissingGenerics generics types ->
+                let
+                    extraGenericsLength =
+                        String.fromInt <| List.length generics
+                in
+                [ "-- MISSING GENERICS"
+                , "I'm expecting " ++ extraGenericsLength ++ " more generics here:"
+                , showLocation src types
+                , "The missing generics are:\n"
+                , List.foldl
+                    (\( name, traits ) str ->
+                        str ++ name.value ++ " : " ++ (String.join " + " <| Dict.keys traits) ++ "\n"
+                    )
+                    ""
+                    generics
+                , showHintIntro
+                , "1. Add the missing " ++ extraGenericsLength ++ " generics."
+                , "2. Reduce the generics by " ++ extraGenericsLength ++ " to fit your types."
+                ]
+
+            -- MissingTraits _ _
+            -- ExtraGenerics _
+            -- UnexpectedGenericTypesInPathSegment _ _#
+            _ ->
+                []
+
 
 showPattern : Located Pattern -> String
 showPattern p =
@@ -1350,8 +1723,15 @@ showType t =
         UnitType ->
             "()"
 
-        NamedType n ->
+        NamedType n generics ->
             n.value
+                ++ (case generics.value of
+                        [] ->
+                            ""
+
+                        _ ->
+                            "<" ++ (String.join ", " <| List.map showType generics.value) ++ ">"
+                   )
 
         StructType { name, fields } ->
             name.value
@@ -1374,6 +1754,21 @@ showType t =
 
         SelfType ->
             "Self"
+
+        GenericType name traits ->
+            let
+                traitNames =
+                    Dict.keys traits
+            in
+            "Generic "
+                ++ name.value
+                ++ (if List.isEmpty traitNames then
+                        ""
+
+                    else
+                        " : "
+                            ++ String.join " + " traitNames
+                   )
 
 
 showFunctionHeader : FunctionHeader a -> String

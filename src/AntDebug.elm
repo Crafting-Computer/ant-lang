@@ -67,9 +67,86 @@ source =
 -- }
 
 --     """
+--     """
+-- fn identity(a : Int) : Int { a }
+-- fn increment(mut a : Int) : () {
+--     let a = a + 1;
+-- }
+-- fn foo() : () {
+--     var a = 3;
+--     call increment(identity(a));
+-- }
+    -- """
+--     """
+-- struct Integer {
+--     value : Int
+-- }
+-- fn identity(a : Integer) : Integer { a }
+-- fn increment(mut a : Integer) : () {
+--     let a.value = a.value + 1;
+-- }
+-- fn foo() : () {
+--     var mut a = Integer { value = 3 };
+--     call increment(identity(a));
+-- }
+--     """
     """
-fn identity(a : Int) : Int { a }
-fn add(a : Int, b : Int) : Int { identity(a) + identity(a, b) }
+struct Located<T : Display> {
+    from : Int,
+    to : Int,
+    value : T
+}
+impl Located<T : Display> {
+    fn length(self : Self) : Int {
+        self.to - self.from
+    }
+    fn value(self : Self) : T {
+        self.value
+    }
+    fn dummyLocated(value : T) : Located<T> {
+        Located::<T> {
+            from = -1,
+            to = -1,
+            value = value,
+        }
+    }
+    fn distance<S>(self : Self, other : Located<S>) : Int {
+        if self.to > other.to {
+            self.from - other.to
+        } else {
+            other.from - self.to
+        }
+    }
+}
+
+trait Display {
+    fn show(self : Self) : String;
+}
+
+impl Display for Located<T : Display> {
+    fn show(self : Self) : String {
+        T::show(self.value)
+    }
+}
+
+fn identity<T>(a : T) : T { a }
+fn foo() : Bool {
+    var a = identity::Located::<String>(
+        identity::Located::<String>(
+            Located::<String> {
+                from = 1,
+                to = 6,
+                value = "hello"
+            }
+        )
+    );
+    var b = Located::<Int> {
+        from = 10,
+        to = 11,
+        value = 0,
+    };
+    Located::<String>::distance(a, b) == 4
+}
     """
 
 
