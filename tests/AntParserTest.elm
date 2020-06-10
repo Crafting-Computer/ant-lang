@@ -857,7 +857,7 @@ testDecl =
                                     , namespace = CStructNamespace "MyStruct" Nothing
                                     , parameters =
                                         [ ( CIdentifierPattern { mutable = False, name = "self" }
-                                          , CNamedType "MyStruct" []
+                                          , CNamedType "MyStruct"
                                           )
                                         ]
                                     , returnType = CIntType
@@ -926,7 +926,7 @@ testDecl =
                                     , namespace = CStructNamespace "MyStruct" Nothing
                                     , parameters =
                                         [ ( CIdentifierPattern { mutable = False, name = "self" }
-                                          , CNamedType "MyStruct" []
+                                          , CNamedType "MyStruct"
                                           )
                                         ]
                                     , returnType = CIntType
